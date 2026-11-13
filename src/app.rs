@@ -170,6 +170,10 @@ pub struct AppView {
     /// The "+ workspace → Open Recent" list, read when that menu opens; and whether its flyout shows.
     pub(crate) recent_workspaces: Vec<Workspace>,
     pub(crate) recent_flyout: bool,
+    /// Whether the pointer is over the "Open Recent" row / its flyout; the flyout
+    /// closes a beat after it leaves both, so the pointer can cross the seam.
+    pub(crate) recent_hover: [bool; 2],
+    recent_close: Option<Task<()>>,
     pub(crate) env_picker_open: bool,
     /// The picker is choosing what a new window shows (⌘⇧N), not switching this one.
     pub(crate) env_picker_new_window: bool,
@@ -308,6 +312,8 @@ impl AppView {
             popover: None,
             recent_workspaces: Vec::new(),
             recent_flyout: false,
+            recent_hover: [false; 2],
+            recent_close: None,
             env_picker_open: false,
             env_picker_new_window: false,
             notes,
@@ -673,9 +679,32 @@ impl AppView {
             recent.truncate(10);
             self.recent_workspaces = recent;
             self.recent_flyout = false;
+            self.recent_hover = [false; 2];
         }
         self.popover = Some(Popover { kind, at });
         cx.notify();
+    }
+
+    /// The pointer entered or left the "Open Recent" row (0) or its flyout (1).
+    pub(crate) fn set_recent_hover(&mut self, part: usize, hovered: bool, cx: &mut Context<Self>) {
+        self.recent_hover[part] = hovered;
+        if hovered {
+            self.recent_close = None;
+            if !self.recent_flyout {
+                self.recent_flyout = true;
+                cx.notify();
+            }
+            return;
+        }
+        self.recent_close = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.recent_hover == [false; 2] && this.recent_flyout {
+                    this.recent_flyout = false;
+                    cx.notify();
+                }
+            });
+        }));
     }
 
     pub(crate) fn close_popover(&mut self, cx: &mut Context<Self>) {

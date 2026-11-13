@@ -559,6 +559,8 @@ impl AppView {
                 .border_color(BORDER)
                 .rounded(px(6.))
                 .shadow(popover_shadow())
+                .occlude()
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.set_recent_hover(1, *hovered, cx)))
                 .children(rows)
         });
 
@@ -575,7 +577,12 @@ impl AppView {
                     .rounded(px(6.))
                     .shadow(popover_shadow())
                     .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_popover(cx)))
+                    // The flyout lies outside the menu's bounds: a press on it isn't "outside".
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        if !this.recent_hover[1] {
+                            this.close_popover(cx);
+                        }
+                    }))
                     .child(item("ws-add-new", "menu-new", "New").rounded_t(px(5.)).on_click(cx.listener(|this, _, window, cx| {
                         this.close_popover(cx);
                         this.new_workspace(window, cx);
@@ -588,10 +595,7 @@ impl AppView {
                         div()
                             .id("ws-add-recent")
                             .relative()
-                            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                this.recent_flyout = *hovered;
-                                cx.notify();
-                            }))
+                            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.set_recent_hover(0, *hovered, cx)))
                             .child(
                                 div()
                                     .px(px(14.))
