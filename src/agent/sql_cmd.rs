@@ -162,13 +162,36 @@ pub fn classify_statement(sql: &str, kind: StatementKind) -> Access {
     }
     let read = match first {
         "select" | "with" | "table" | "values" => kind == StatementKind::Select && !select_has_write_clause(&w),
-        // EXPLAIN ANALYZE runs the statement.
-        "explain" => !w.iter().any(|x| x == "analyze"),
-        // `PRAGMA user_version = 3` writes; `PRAGMA table_info(t)` reads.
-        "pragma" => !body.contains('='),
+        // EXPLAIN ANALYZE (or ANALYSE) runs the statement.
+        "explain" => !w.iter().any(|x| x == "analyze" || x == "analyse"),
+        "pragma" => pragma_reads(&w, body),
         _ => READ_LEADERS.contains(&first),
     };
     if read { Access::Read } else { Access::Write }
+}
+
+/// SQLite PRAGMAs that only report, whatever their argument (`table_info(t)`).
+const INSPECT_PRAGMAS: [&str; 16] = [
+    "table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo", "foreign_key_list",
+    "foreign_key_check", "database_list", "collation_list", "function_list", "module_list", "pragma_list",
+    "compile_options", "integrity_check", "quick_check",
+];
+
+/// Settings PRAGMAs that read when queried bare (`PRAGMA journal_mode`) but
+/// write with `= value` or `(value)`.
+const VALUE_PRAGMAS: [&str; 9] =
+    ["user_version", "schema_version", "application_id", "journal_mode", "encoding", "foreign_keys", "page_size", "page_count", "freelist_count"];
+
+/// A PRAGMA is a read only when it's a known inspection pragma, or a known
+/// setting queried without an argument; anything else counts as a write.
+fn pragma_reads(w: &[String], body: &str) -> bool {
+    // `PRAGMA main.table_info(t)`: the name follows an optional schema.
+    let name = match (w.get(1), w.get(2)) {
+        (Some(_), Some(n)) if body.split_whitespace().nth(1).is_some_and(|t| t.contains('.')) => n,
+        (Some(n), _) => n,
+        _ => return false,
+    };
+    INSPECT_PRAGMAS.contains(&name.as_str()) || (VALUE_PRAGMAS.contains(&name.as_str()) && !body.contains('=') && !body.contains('('))
 }
 
 /// A batch is a write when ANY statement is (refused whole, never half-run).
@@ -1228,6 +1251,8 @@ mod tests {
             "describe users",
             "values (1)",
             "pragma table_info(users)",
+            "pragma main.index_list(users)",
+            "pragma journal_mode",
             "select updated_at, last_update from t",
             "",
         ] {
@@ -1243,6 +1268,10 @@ mod tests {
             "grant select on t to u",
             "call proc()",
             "explain analyze select 1",
+            "explain analyse select 1",
+            "pragma journal_mode(wal)",
+            "pragma writable_schema",
+            "pragma optimize",
             "EXPLAIN (ANALYZE, BUFFERS) select 1",
             "select * into newt from t",
             "select * from t for update",
