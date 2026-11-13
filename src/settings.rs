@@ -140,6 +140,10 @@ fn set_values(this: &mut AppView, patch: &[(&str, serde_json::Value)], cx: &mut 
         let home = std::env::home_dir().unwrap_or_default();
         prefs::apply_terminal_mouse_config(&home, v.as_bool().unwrap_or(false));
     }
+    // Turned on: ask for permission now (a no-op once the user has answered).
+    if patch.iter().any(|(k, v)| *k == "systemNotifications" && v.as_bool() == Some(true)) {
+        crate::agent::notify::request_authorization();
+    }
     if changed("focusModeHotkey") {
         prefs::apply_focus_hotkey(&this.store.app_settings(), cx);
     }
@@ -200,6 +204,8 @@ impl AppView {
         let on = |k: &str| all.get(k).and_then(serde_json::Value::as_bool).unwrap_or(false);
         let mute = on("muteAll");
         let system = all.get("systemNotifications").and_then(serde_json::Value::as_bool) != Some(false);
+        // The user may turn ours off (or back on) in System Settings at any time.
+        crate::agent::notify::refresh_status_throttled();
         let waiting = all.get("notifyOnWaiting").and_then(serde_json::Value::as_bool) != Some(false);
         let (integrations, terminal, long_running) = (on("agentIntegrations"), on("agentTerminalControl"), on("agentLongRunningInPanes"));
         let (sql, sql_write, sftp, sftp_write) = (on("agentSqlControl"), on("agentSqlWrite"), on("agentSftpControl"), on("agentSftpWrite"));
@@ -230,6 +236,17 @@ impl AppView {
                     |t, v, cx| set(t, &[("systemNotifications", v)], cx),
                     cx,
                 ))
+                .when(system && !mute && crate::agent::notify::denied(), |d| {
+                    d.child(
+                        div()
+                            .ml(px(22.))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.))
+                            .child(div().flex_1().text_size(px(11.)).line_height(px(16.5)).text_color(ACCENT_RED).child("Notifications are off for SplitGrid Lite in System Settings."))
+                            .child(ghost_button("notify-settings", "Open System Settings").on_click(|_, _, cx| cx.open_url(crate::agent::notify::SETTINGS_URL))),
+                    )
+                })
                 .child(toggle(
                     "waiting",
                     "Notify when an agent is waiting",

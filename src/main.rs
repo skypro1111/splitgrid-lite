@@ -124,6 +124,9 @@ fn main() {
         };
         let shared = windows::Shared { store, connections: std::sync::Arc::new(std::sync::Mutex::new(connections)), agent };
         windows::init(shared, requests, cx);
+        // Agent notifications: the click handler, and permission when they are on.
+        let all = cx.global::<windows::Shared>().store.app_settings();
+        agent::notify::init(all.get("systemNotifications").and_then(serde_json::Value::as_bool) != Some(false), cx);
         // ⌘⇧N / File → New Window: a window asks which environment to open
         // (AppView handles it). Reaching here means no window is open: reopen the last one.
         cx.on_action(|_: &app::NewWindow, cx| {

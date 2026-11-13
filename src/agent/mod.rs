@@ -155,6 +155,10 @@ impl crate::app::AppView {
                 })
             })
             .collect();
+        // What the user is looking at no longer needs its banner in Notification Center.
+        if let Some(v) = viewing.as_deref() {
+            notify::withdraw(terms.iter().filter(|t| t.workspace == v).map(|t| t.id));
+        }
         let before = (self.attention.kinds.clone(), self.attention.unviewed.clone());
         let alerts = self.attention.recompute(&terms, viewing.as_deref(), now);
         if before != (self.attention.kinds.clone(), self.attention.unviewed.clone()) {
@@ -182,7 +186,12 @@ impl crate::app::AppView {
                 Alert::Waiting => ("waiting for you", "Needs your input"),
             };
             let body = self.attention.detail(&id, alert).unwrap_or(fallback).to_owned();
-            notify::post(&format!("{} · {label} — {state}", ws.name), &body);
+            notify::post(&notify::Alert {
+                target: notify::Target { env: self.env_id.clone(), workspace: ws_id.clone(), terminal: id.clone() },
+                title: &format!("{} · {label} — {state}", ws.name),
+                subtitle: None,
+                body: &body,
+            });
         }
     }
 

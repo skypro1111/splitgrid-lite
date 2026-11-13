@@ -469,6 +469,25 @@ impl AppView {
         self.after_switch(window, cx);
     }
 
+    /// A clicked notification: show workspace `ws` and focus its terminal `id`
+    /// (just the workspace when the terminal has gone since).
+    pub(crate) fn reveal_terminal(&mut self, ws: &str, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.state.workspaces.iter().any(|w| w.id == ws) {
+            return;
+        }
+        self.switch_workspace(ws.to_owned(), window, cx);
+        if let Some(w) = self.state.workspaces.iter_mut().find(|w| w.id == ws)
+            && w.container(id).is_some()
+        {
+            w.focused_container_id = Some(id.to_owned());
+            if self.focus_mode.as_deref().is_some_and(|f| f != id) {
+                self.focus_mode = None;
+            }
+        }
+        self.focus_pending = true;
+        self.changed(cx);
+    }
+
     fn after_switch(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.renaming = None;
         self.popover = None;
@@ -1202,6 +1221,7 @@ impl AppView {
         self.drop_browser_pane(id, cx);
         self.panes.remove(id);
         self.attention.forget(id);
+        crate::agent::notify::withdraw([id]);
         self.sftp_panes.remove(id);
         self.ide_panes.remove(id);
         if self.focus_mode.as_deref() == Some(id) {

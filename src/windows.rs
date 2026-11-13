@@ -143,3 +143,21 @@ pub fn open_env(env: Option<String>, cx: &mut App) {
         log::error!("opening a window: {e:#}");
     }
 }
+
+/// A clicked agent notification: bring the app and its environment's window
+/// forward (reopening it if it was closed), then show the workspace and terminal.
+pub fn reveal_terminal(target: crate::agent::notify::Target, cx: &mut App) {
+    cx.activate(true);
+    if window_for(&target.env, cx).is_none() {
+        if !cx.global::<Shared>().store.list_envs().iter().any(|e| e.id == target.env) {
+            return;
+        }
+        open_env(Some(target.env.clone()), cx);
+    }
+    let Some(handle) = window_for(&target.env, cx) else { return };
+    let Some(view) = app_view(handle, cx) else { return };
+    let _ = handle.update(cx, |_, window, cx| {
+        window.activate_window();
+        view.update(cx, |view, cx| view.reveal_terminal(&target.workspace, &target.terminal, window, cx));
+    });
+}
