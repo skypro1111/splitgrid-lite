@@ -33,6 +33,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "
 log = "0.4"
 lsp-types = "0.97"
 notify = "8"
+ignore = "0.4"
 rand = "0.9"
 regex = "1"
 russh-sftp = "3"
@@ -54,6 +55,7 @@ sql-postgres = { path = "crates/sql-postgres" }
 sql-mysql = { path = "crates/sql-mysql" }
 sql-sqlite = { path = "crates/sql-sqlite" }
 sql-mssql = { path = "crates/sql-mssql" }
+rust_xlsxwriter = { version = "0.102", default-features = false }
 
 # Dependencies optimised even in debug: an unoptimised VT parser/renderer makes
 # any performance judgement of the spike meaningless.

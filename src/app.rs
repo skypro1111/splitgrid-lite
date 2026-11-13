@@ -204,6 +204,8 @@ pub struct AppView {
     pub(crate) agent: Option<Rc<crate::agent::AgentConfig>>,
     /// Agent terminals' Working / Waiting / Done, and what the user hasn't seen yet.
     pub(crate) attention: crate::agent::attention::Attention,
+    /// `app-settings.json`'s mtime when last looked at (the Electron app edits it too).
+    app_settings_seen: Option<std::time::SystemTime>,
 }
 
 impl AppView {
@@ -218,8 +220,10 @@ impl AppView {
         crate::windows::set_env(window.window_handle(), &env_id, cx);
         // Closing the window: save its environment, and it no longer holds it.
         let handle = window.window_handle();
+        let sync_owner = cx.entity_id().to_string();
         cx.on_release(move |this, cx| {
             this.flush();
+            crate::sftp_sync::stop_watchers(&sync_owner);
             crate::windows::forget(handle, cx);
         })
         .detach();
@@ -266,6 +270,10 @@ impl AppView {
                     if this.connections.lock().unwrap().sync_from_disk() {
                         cx.notify();
                     }
+                    // …and app-settings.json: Settings shows its edits, the shortcut follows them.
+                    this.sync_app_settings(window, cx);
+                    // Workspace SFTP auto sync: a watcher per workspace whose sync is on.
+                    this.reconcile_sync_watchers(cx);
                 });
                 if alive.is_err() {
                     break;
@@ -325,7 +333,21 @@ impl AppView {
             manager: Default::default(),
             agent: shared.agent.clone(),
             attention: Default::default(),
+            app_settings_seen: None,
         }
+    }
+
+    /// Follow edits of the shared `app-settings.json` made elsewhere.
+    fn sync_app_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let seen = crate::app_settings::mtime(&self.store.app_settings_path());
+        if seen == self.app_settings_seen {
+            return;
+        }
+        self.app_settings_seen = seen;
+        let all = self.store.app_settings();
+        crate::app_settings::apply_focus_hotkey(&all, cx);
+        self.sync_settings_controls(&all, window, cx);
+        cx.notify();
     }
 
     /// Whether pane `id` is in this window's environment (agent requests are routed by it).
@@ -867,21 +889,36 @@ impl AppView {
             })
             .collect();
         for (id, state) in wanted {
-            let pane = cx.new(|cx| crate::sql_pane::SqlPane::new(state.as_ref(), window, cx));
-            let pid = id.clone();
-            let sub = cx.subscribe(&pane, move |this, _, ev: &crate::sql_pane::SqlEvent, cx| match ev {
-                crate::sql_pane::SqlEvent::State(state) => {
-                    if let Some(c) = this.state.workspaces.iter_mut().find_map(|w| w.container_mut(&pid))
-                        && c.content.extra.get("sqlState") != Some(state)
-                    {
-                        c.content.extra.insert("sqlState".into(), state.clone());
-                        this.changed(cx);
-                    }
-                }
-                crate::sql_pane::SqlEvent::Close => this.close_pane(&pid, cx),
-            });
-            self.sql_panes.insert(id, (pane, sub));
+            self.create_sql_pane(id, state, window, cx);
         }
+    }
+
+    /// A SQL pane's live view, made now if it has none (an agent drives a hidden workspace's pane).
+    pub(crate) fn sql_pane_view(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<crate::sql_pane::SqlPane>> {
+        if let Some((pane, _)) = self.sql_panes.get(id) {
+            return Some(pane.clone());
+        }
+        let c = self.state.workspaces.iter().find_map(|w| w.container(id)).filter(|c| c.content.kind == ContentType::Sql)?;
+        let state = c.content.extra.get("sqlState").cloned();
+        Some(self.create_sql_pane(id.to_owned(), state, window, cx))
+    }
+
+    fn create_sql_pane(&mut self, id: String, state: Option<serde_json::Value>, window: &mut Window, cx: &mut Context<Self>) -> Entity<crate::sql_pane::SqlPane> {
+        let pane = cx.new(|cx| crate::sql_pane::SqlPane::new(state.as_ref(), window, cx));
+        let pid = id.clone();
+        let sub = cx.subscribe(&pane, move |this, _, ev: &crate::sql_pane::SqlEvent, cx| match ev {
+            crate::sql_pane::SqlEvent::State(state) => {
+                if let Some(c) = this.state.workspaces.iter_mut().find_map(|w| w.container_mut(&pid))
+                    && c.content.extra.get("sqlState") != Some(state)
+                {
+                    c.content.extra.insert("sqlState".into(), state.clone());
+                    this.changed(cx);
+                }
+            }
+            crate::sql_pane::SqlEvent::Close => this.close_pane(&pid, cx),
+        });
+        self.sql_panes.insert(id, (pane.clone(), sub));
+        pane
     }
 
     /// "IDE" in an empty container: the workspace folder, or one picked now

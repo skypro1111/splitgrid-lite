@@ -3,6 +3,7 @@
 mod agent;
 mod anim;
 mod app;
+mod app_settings;
 mod assets;
 mod browser;
 mod chrome;
@@ -15,6 +16,7 @@ mod settings;
 mod sftp;
 mod sftp_format;
 mod sftp_pane;
+mod sftp_sync;
 mod ssh;
 mod ssh_prompt;
 mod ssh_ui;
@@ -69,6 +71,10 @@ fn main() {
     };
     store.adopt_settings(&app_support_dir("SplitGrid Native"));
 
+    // The agent hooks and skills Agent integrations ask for (off: nothing is touched).
+    let installer = agent::install::Installer::new(&data_dir);
+    std::thread::spawn(move || installer.startup());
+
     let connections = match model::connections::ConnectionStore::open(&data_dir) {
         Ok(c) => c,
         Err(e) => {
@@ -84,6 +90,8 @@ fn main() {
         ide::bind_keys(cx);
         sql_pane::bind_keys(cx);
         browser::bind_keys(cx);
+        // The focus-mode shortcut the user picked (Settings → Shortcuts), over the default.
+        app_settings::apply_focus_hotkey(&store.app_settings(), cx);
         // sg-browser's console/network hooks: before any pane exists, so every page gets them.
         browser::bridge::init(cx);
         cx.set_menus(vec![

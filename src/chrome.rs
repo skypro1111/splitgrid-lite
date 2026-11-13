@@ -449,7 +449,9 @@ impl AppView {
                 .hover(|d| d.bg(BG_HOVER))
                 .child(label)
         };
-        let (r_id, f_id, d_id) = (ws_id.clone(), ws_id.clone(), ws_id.clone());
+        let (r_id, f_id, d_id, s_id) = (ws_id.clone(), ws_id.clone(), ws_id.clone(), ws_id.clone());
+        // Workspace SFTP sync (configured in the Electron app's workspace settings).
+        let sync = self.sync_menu_entry(ws);
         deferred(
             anchored().position(at).snap_to_window_with_margin(px(8.)).child(
                 div()
@@ -477,6 +479,17 @@ impl AppView {
                                 this.choose_folder(f_id.clone(), cx);
                             })),
                     )
+                    .when_some(sync, |d, (label, detail)| {
+                        d.child(
+                            item("ws-menu-sync", label, false)
+                                .child(div().flex_1())
+                                .child(div().ml(px(12.)).text_size(px(11.)).text_color(TEXT_MUTED).child(detail))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.close_popover(cx);
+                                    this.sync_workspace_now(&s_id, cx);
+                                })),
+                        )
+                    })
                     .child(div().my(px(4.)).h(px(1.)).bg(BORDER))
                     .child(item("ws-menu-delete", "Delete workspace".into(), true).on_click(cx.listener(move |this, _, window, cx| {
                         this.close_popover(cx);

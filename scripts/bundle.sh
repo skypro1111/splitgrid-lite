@@ -20,6 +20,12 @@ cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 mkdir -p "$APP/Contents/Resources/helpers"
 cp ../swapit/resources/splitgrid-*.sh "$APP/Contents/Resources/helpers/"
 chmod +x "$APP/Contents/Resources/helpers/"*.sh
+# The sg-* skills Agent integrations install into ~/.claude/skills (src/agent/install.rs).
+mkdir -p "$APP/Contents/Resources/skills"
+cp -R ../swapit/resources/skills/. "$APP/Contents/Resources/skills/"
+# The notification sounds (Settings → Notifications → Default sound).
+mkdir -p "$APP/Contents/Resources/sounds"
+cp ../swapit/src/renderer/sounds/*.mp3 "$APP/Contents/Resources/sounds/"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

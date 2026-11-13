@@ -10,6 +10,7 @@
 //! database. The active one, the expanded nodes, the console text and the
 //! split sizes persist in the container's `sqlState`.
 
+pub(crate) mod agent;
 pub mod grid;
 
 mod completion;
@@ -288,6 +289,8 @@ pub struct SqlPane {
     value_panel: bool,
     /// The value panel's editor and the cell it shows (tab, row, col).
     value_editor: Option<((u64, usize, usize), Entity<EditorState>)>,
+    /// Batches an agent (sg-sql) waits on.
+    agent_waits: HashMap<u64, agent::AgentWait>,
     _subs: Vec<Subscription>,
 }
 
@@ -382,6 +385,7 @@ impl SqlPane {
             body_bounds: Default::default(),
             value_panel: false,
             value_editor: None,
+            agent_waits: HashMap::new(),
             _subs: subs,
         };
         // Restored: reconnect the active connection (to the database it was on).
@@ -613,8 +617,10 @@ impl SqlPane {
         if self.running.is_some() {
             return;
         }
+        self.agent_settle();
         let Some(session) = self.session.clone() else {
             self.queue.clear();
+            self.agent_settle();
             return;
         };
         let Some(job) = self.queue.next(&self.tx, session.dialect) else {
@@ -750,6 +756,8 @@ impl SqlPane {
         let ms = running.started.elapsed().as_millis();
         let Job { batch, sql, kind, .. } = running.job;
         let tab = running.tab;
+        let error = result.as_ref().err().map(|e| format!("{e:#}"));
+        self.agent_record(batch, &kind, &sql, tab, running.rows, running.affected, running.capped, ms, error, cx);
         match result {
             Ok(()) => {
                 self.tx.applied(&kind, &sql);

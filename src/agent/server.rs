@@ -96,10 +96,12 @@ fn serve(stream: TcpStream, tx: &UnboundedSender<Request>) -> std::io::Result<()
         body: serde_json::from_slice(&body).unwrap_or(Value::Null),
         reply,
     };
+    // Transfers outlive the other bridges' budget (Electron gives /sftp 180s).
+    let timeout = if request.kind == "sftp" { super::sftp_cmd::REQUEST_TIMEOUT + Duration::from_secs(2) } else { REPLY_TIMEOUT };
     if tx.unbounded_send(request).is_err() {
         return write_response(&mut out, 503, &json!({ "ok": false, "error": "shutting_down" }));
     }
-    let value = answer.recv_timeout(REPLY_TIMEOUT).unwrap_or_else(|_| json!({ "ok": false, "error": "timeout" }));
+    let value = answer.recv_timeout(timeout).unwrap_or_else(|_| json!({ "ok": false, "error": "timeout" }));
     write_response(&mut out, 200, &value)
 }
 

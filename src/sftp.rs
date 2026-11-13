@@ -36,7 +36,9 @@ pub struct Entry {
 
 pub struct SftpClient {
     sftp: SftpSession,
-    _ssh: Handle<Client>,
+    ssh: Handle<Client>,
+    /// Remote folders already made (or found) on this connection, so `ensure_dir_all` skips them.
+    known_dirs: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 /// Run an SFTP future on the SSH runtime and await it from anywhere.
@@ -65,7 +67,7 @@ impl SftpClient {
         channel.request_subsystem(true, "sftp").await?;
         let sftp = SftpSession::new(channel.into_stream()).await.context("start SFTP")?;
         sftp.set_timeout(30);
-        Ok(Arc::new(Self { sftp, _ssh: ssh }))
+        Ok(Arc::new(Self { sftp, ssh, known_dirs: Default::default() }))
     }
 
     /// The login directory.
@@ -95,6 +97,40 @@ impl SftpClient {
             .collect();
         sort_entries(&mut out);
         Ok(out)
+    }
+
+    /// The SSH transport under this session is gone (reconnect before reuse).
+    pub fn is_closed(&self) -> bool {
+        self.ssh.is_closed()
+    }
+
+    /// One entry's attributes (following symlinks).
+    pub async fn stat(&self, path: &str) -> Result<Entry> {
+        let m = self.sftp.metadata(path).await.with_context(|| format!("stat {path}"))?;
+        let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or("").to_owned();
+        Ok(Entry { name, is_dir: m.is_dir(), is_symlink: m.is_symlink(), size: m.size.unwrap_or(0), modified: m.mtime.map(u64::from), mode: m.permissions })
+    }
+
+    /// `mkdir -p`: create every missing folder of `dir`, ignoring "already exists"
+    /// (the Electron app's ensureRemoteDir). Remembered per connection.
+    pub async fn ensure_dir_all(&self, dir: &str) {
+        let mut current = String::new();
+        for part in dir.split('/').filter(|p| !p.is_empty()) {
+            current = if current.is_empty() && dir.starts_with('/') { format!("/{part}") } else if current.is_empty() { part.to_owned() } else { format!("{current}/{part}") };
+            if self.known_dirs.lock().unwrap().contains(&current) {
+                continue;
+            }
+            let _ = self.sftp.create_dir(current.as_str()).await;
+            self.known_dirs.lock().unwrap().insert(current.clone());
+        }
+    }
+
+    /// `remove`, but a path that is already gone is not an error.
+    pub async fn remove_if_exists(&self, path: &str) -> Result<()> {
+        if self.sftp.symlink_metadata(path).await.is_err() {
+            return Ok(());
+        }
+        self.remove(path).await
     }
 
     pub async fn is_dir(&self, path: &str) -> Result<bool> {

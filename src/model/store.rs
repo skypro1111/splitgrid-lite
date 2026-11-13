@@ -100,18 +100,34 @@ impl Store {
         ids
     }
 
-    /// The Electron app's `app-settings.json` (shared: both apps read and write it).
-    pub fn app_settings(&self) -> Map<String, Value> {
-        fs::read(self.dir.join(APP_SETTINGS_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    /// The data directory (shared with the Electron app).
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
-    /// Change some keys of `app-settings.json`, keeping every other one as it is.
+    pub fn app_settings_path(&self) -> PathBuf {
+        self.dir.join(APP_SETTINGS_FILE)
+    }
+
+    /// The Electron app's `app-settings.json` (shared: both apps read and write it).
+    pub fn app_settings(&self) -> Map<String, Value> {
+        fs::read(self.app_settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    /// Change some keys of `app-settings.json`, keeping every other one as it
+    /// is: the file is re-read right before the write, so whatever the Electron
+    /// app saved meanwhile stays. `null` removes a key (the Electron app's
+    /// `undefined`, e.g. a shortcut reset to its default).
     pub fn patch_app_settings(&self, patch: &[(&str, Value)]) -> Result<()> {
         let mut all = self.app_settings();
         for (k, v) in patch {
-            all.insert((*k).to_owned(), v.clone());
+            if v.is_null() {
+                all.remove(*k);
+            } else {
+                all.insert((*k).to_owned(), v.clone());
+            }
         }
-        write_atomic(&self.dir.join(APP_SETTINGS_FILE), &serde_json::to_vec_pretty(&all)?)
+        write_atomic(&self.app_settings_path(), &serde_json::to_vec_pretty(&all)?)
     }
 
     /// Workspaces closed in `env`, newest first (the "+ workspace → Open Recent" menu).
@@ -290,6 +306,26 @@ mod tests {
         assert_eq!(all["defaultSoundId"], "bell");
         assert_eq!(all["muteAll"], false);
         assert_eq!(all["agentIntegrations"], true);
+    }
+
+    #[test]
+    fn app_settings_round_trip_unknown_keys_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().to_path_buf()).unwrap();
+        let original = r#"{"zeta":{"nested":[1,2,{"x":null}]},"fastChat":{"apiKey":"k","models":["a"]},"defaultVolume":0.35,"focusModeHotkey":{"key":"p","meta":true},"alpha":"keep"}"#;
+        fs::write(store.app_settings_path(), original).unwrap();
+        store.patch_app_settings(&[("defaultVolume", 0.8.into()), ("focusModeHotkey", Value::Null), ("muteAll", true.into())]).unwrap();
+        let raw: Value = serde_json::from_slice(&fs::read(store.app_settings_path()).unwrap()).unwrap();
+        let keys: Vec<&String> = raw.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["zeta", "fastChat", "defaultVolume", "alpha", "muteAll"], "order kept, reset key gone, new key last");
+        assert_eq!(raw["zeta"], serde_json::json!({"nested":[1,2,{"x":null}]}));
+        assert_eq!(raw["fastChat"]["apiKey"], "k");
+        assert_eq!(raw["defaultVolume"], 0.8);
+        assert_eq!(raw["alpha"], "keep");
+        // A missing file is created with just the patch.
+        fs::remove_file(store.app_settings_path()).unwrap();
+        store.patch_app_settings(&[("muteAll", false.into())]).unwrap();
+        assert_eq!(store.app_settings().len(), 1);
     }
 
     #[test]

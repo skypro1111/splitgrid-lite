@@ -10,8 +10,11 @@
 pub mod activity;
 pub mod attention;
 pub mod browser_cmd;
+pub mod install;
 pub mod notify;
 pub mod server;
+pub mod sql_cmd;
+pub mod sftp_cmd;
 pub mod terminal_cmd;
 pub mod zones;
 
@@ -90,13 +93,15 @@ impl AgentConfig {
             env.insert("SPLITGRID_TERMINAL_CLI".into(), helper("splitgrid-terminal.sh"));
             env.insert("SPLITGRID_TERMINAL_TOKEN".into(), self.token.clone());
         }
+        sftp_cmd::add_env(self, &mut env);
+        sql_cmd::add_env(self, &mut env);
         env
     }
 }
 
 /// The helper scripts: in the app bundle's Resources, else (a dev build) the
 /// Electron app's sources next to this repo.
-fn helpers_dir() -> PathBuf {
+pub(crate) fn helpers_dir() -> PathBuf {
     let bundled = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/helpers")));
     match bundled {
         Some(dir) if dir.join("splitgrid-terminal.sh").is_file() => dir,
@@ -158,15 +163,14 @@ impl crate::app::AppView {
 
         let Some(cfg) = self.agent.clone() else { return };
         let (system, on_waiting, mute_all) = cfg.notify_prefs();
-        if mute_all || !system || focused {
-            return;
-        }
         for (alert, id, ws_id) in alerts {
             if alert == Alert::Waiting && !on_waiting {
                 continue;
             }
             let Some(ws) = self.state.workspaces.iter().find(|w| w.id == ws_id) else { continue };
-            if ws.extra.get("notifyMuted").and_then(Value::as_bool) == Some(true) {
+            // The sound plays focused or not (useAgentAttention); the banner only in the background.
+            crate::app_settings::play_alert_sound(&self.store.app_settings(), &ws.extra);
+            if mute_all || !system || focused || ws.extra.get("notifyMuted").and_then(Value::as_bool) == Some(true) {
                 continue;
             }
             let label = ws
@@ -248,6 +252,8 @@ impl crate::app::AppView {
                     browser_cmd::Answer::Later(task) => cx.spawn(async move |_, _| req.respond(task.await)).detach(),
                 }
             }
+            "sftp" => self.handle_sftp_request(req, &cfg, cx),
+            "sql" => self.handle_sql_request(req, &cfg, window, cx),
             other => req.respond(json!({
                 "ok": false,
                 "error": "not_supported",

@@ -1,15 +1,23 @@
 //! Settings (SettingsModal in the Electron app): General, and the SSH
 //! connection manager (SSHConnectionManager) — groups, test, edit, duplicate, delete.
+//!
+//! General holds every Electron setting this app acts on, stored in the shared
+//! `app-settings.json` as patches (keys this app doesn't know are kept). Left
+//! out because Lite has no such feature (yet): the background colour, the
+//! terminal renderer and Windows shell, browser-extension control, Workspace
+//! history, the Claude Code pane, and the Fast chat and Account tabs.
 
 use std::collections::{HashMap, HashSet};
 
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::AppView;
+use crate::app_settings::{self as prefs, Hotkey};
 use crate::model::connections::{AuthMethod, SavedConnection};
 use crate::model::workspace::new_id;
 use crate::theme::*;
@@ -38,6 +46,15 @@ pub struct ManagerState {
     group_input: Option<Entity<InputState>>,
     _group_sub: Option<Subscription>,
     error: Option<String>,
+
+    // General's controls with state of their own.
+    volume: Option<Entity<SliderState>>,
+    _volume_sub: Option<Subscription>,
+    sound_menu: bool,
+    /// The focus-mode shortcut recorder is waiting for a chord.
+    pub(crate) recording: bool,
+    hotkey_hint: Option<&'static str>,
+    _recorder: Option<Subscription>,
 }
 
 // ── General ──────────────────────────────────────────────────────────────────
@@ -101,13 +118,79 @@ fn toggle(
         .child(switch)
 }
 
-/// Save some keys of the shared app settings.
+/// Save some switches of the shared app settings.
 fn set(this: &mut AppView, patch: &[(&str, bool)], cx: &mut Context<AppView>) {
     let patch: Vec<(&str, serde_json::Value)> = patch.iter().map(|(k, v)| (*k, (*v).into())).collect();
-    if let Err(e) = this.store.patch_app_settings(&patch) {
+    set_values(this, &patch, cx);
+}
+
+/// Save some keys of the shared app settings, then act on them at once (as
+/// the Electron app's app-settings:save does).
+fn set_values(this: &mut AppView, patch: &[(&str, serde_json::Value)], cx: &mut Context<AppView>) {
+    if let Err(e) = this.store.patch_app_settings(patch) {
         log::error!("saving settings: {e:#}");
     }
+    let changed = |k: &str| patch.iter().any(|(p, _)| *p == k);
+    // Agent integrations install or remove the hooks and skills.
+    if crate::agent::install::SWITCH_KEYS.iter().any(|k| changed(k)) {
+        let installer = crate::agent::install::Installer::new(this.store.dir());
+        std::thread::spawn(move || installer.apply());
+    }
+    if let Some((_, v)) = patch.iter().find(|(k, _)| *k == "terminalMouseScroll") {
+        let home = std::env::home_dir().unwrap_or_default();
+        prefs::apply_terminal_mouse_config(&home, v.as_bool().unwrap_or(false));
+    }
+    if changed("focusModeHotkey") {
+        prefs::apply_focus_hotkey(&this.store.app_settings(), cx);
+    }
     cx.notify();
+}
+
+/// A form row (settings-ui's Row): a 130px label, then the controls.
+fn row(label: &'static str) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .mb(px(12.))
+        .child(div().w(px(130.)).flex_none().text_size(px(12.)).text_color(TEXT_PRIMARY).child(label))
+}
+
+/// settings-ui's Hint.
+fn hint(text: &'static str) -> Div {
+    div().mt(px(-4.)).mb(px(10.)).text_size(px(11.)).line_height(px(16.5)).text_color(TEXT_MUTED).child(text)
+}
+
+/// A bordered control box (settings-ui's controlStyle).
+fn control(id: &'static str, active: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px(px(11.))
+        .py(px(8.))
+        .rounded(px(9.))
+        .bg(BG_PRIMARY)
+        .border_1()
+        .border_color(if active { ACCENT } else { BORDER })
+        .when(active, |d| d.shadow(vec![BoxShadow { color: c(hexa(0x228df2, 0.16)), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(3.), inset: false }]))
+        .text_size(px(12.))
+        .cursor_pointer()
+}
+
+fn ghost_button(id: &'static str, label: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px(px(12.))
+        .py(px(8.))
+        .rounded(px(9.))
+        .border_1()
+        .border_color(BORDER)
+        .bg(BG_PRIMARY)
+        .text_size(px(12.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(TEXT_PRIMARY)
+        .cursor_pointer()
+        .hover(|d| d.bg(BG_HOVER))
+        .child(label)
 }
 
 impl AppView {
@@ -121,6 +204,11 @@ impl AppView {
         let (integrations, terminal, long_running) = (on("agentIntegrations"), on("agentTerminalControl"), on("agentLongRunningInPanes"));
         let (sql, sql_write, sftp, sftp_write) = (on("agentSqlControl"), on("agentSqlWrite"), on("agentSftpControl"), on("agentSftpWrite"));
         let nested = |d: Div| div().ml(px(22.)).mt(px(14.)).child(d);
+        let sound = prefs::default_sound(&all);
+        let volume = prefs::default_volume(&all);
+        let mouse_scroll = on("terminalMouseScroll");
+        let hotkey = Hotkey::focus_mode(&all);
+        let recording = self.manager.recording;
 
         let notifications = card(
             "Notifications",
@@ -151,7 +239,62 @@ impl AppView {
                     |t, v, cx| set(t, &[("notifyOnWaiting", v)], cx),
                     cx,
                 )),
+        )
+        .child(
+            div()
+                .mt(px(14.))
+                .when(mute, |d| d.opacity(0.5))
+                .child(
+                    row("Default sound")
+                        .child(self.sound_picker(&sound, cx))
+                        .child(ghost_button("sound-test", "▶ Test").on_click(move |_, _, _| prefs::play(&sound, volume))),
+                )
+                .child(
+                    row("Default volume")
+                        .child(div().flex_1().max_w(px(220.)).when_some(self.manager.volume.as_ref(), |d, v| d.child(Slider::new(v))))
+                        .child(div().w(px(38.)).text_right().text_size(px(12.)).text_color(TEXT_MUTED).child(format!("{}%", (volume * 100.).round()))),
+                ),
         );
+
+        let terminal_card = card("Terminal", None).child(div().mt(px(14.)).child(toggle(
+            "mouse-scroll",
+            "Mouse wheel scroll in tmux / screen",
+            Some("Enables mouse mode in your local ~/.tmux.conf and ~/.screenrc so the wheel scrolls their scrollback. Trade-off: text selection then goes through tmux/screen — hold Shift to select natively. Only affects this machine (not remote tmux over SSH); reopen tmux or run “tmux source-file ~/.tmux.conf” to apply to running sessions."),
+            mouse_scroll,
+            false,
+            |t, v, cx| set(t, &[("terminalMouseScroll", v)], cx),
+            cx,
+        )));
+
+        let shortcuts = card("Shortcuts", None)
+            .child(
+                div().mt(px(14.)).child(
+                    row("Focus mode").child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .child(
+                                control("hotkey-focus", recording)
+                                    .min_w(px(140.))
+                                    .font_family("Menlo")
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(if recording { TEXT_MUTED } else { TEXT_PRIMARY })
+                                    .child(if recording { "Press keys… (Esc)".to_owned() } else { hotkey.label() })
+                                    .on_click(cx.listener(|this, _, _, cx| if this.manager.recording { this.stop_recording(cx) } else { this.start_recording(cx) })),
+                            )
+                            .when(!recording && hotkey != Hotkey::default_focus_mode(), |d| {
+                                d.child(
+                                    ghost_button("hotkey-reset", "Reset")
+                                        .text_color(TEXT_MUTED)
+                                        .on_click(cx.listener(|this, _, _, cx| set_values(this, &[("focusModeHotkey", serde_json::Value::Null)], cx))),
+                                )
+                            })
+                            .when_some(self.manager.hotkey_hint, |d, h| d.child(div().text_size(px(11.)).text_color(ACCENT_RED).child(h))),
+                    ),
+                ),
+            )
+            .child(hint("Toggle a single container to full-screen focus (and back). Works over terminals, editors and browser panes."));
 
         let agents = card("Agent integrations", None)
             .child(div().mt(px(14.)).child(toggle(
@@ -231,8 +374,147 @@ impl AppView {
             .bg(BG_PRIMARY)
             .p(px(20.))
             .child(notifications)
+            .child(terminal_card)
+            .child(shortcuts)
             .child(agents)
             .into_any_element()
+    }
+
+    /// The default-sound select (settings-ui's PSelect): the current sound, and its menu below.
+    fn sound_picker(&self, current: &str, cx: &mut Context<Self>) -> Div {
+        let open = self.manager.sound_menu;
+        let options: Vec<(&'static str, &'static str)> = prefs::SOUNDS.iter().copied().chain([(prefs::SILENT_SOUND_ID, "Silent")]).collect();
+        let menu = div()
+            .id("sound-menu")
+            .mt(px(4.))
+            .min_w(px(170.))
+            .py(px(4.))
+            .flex()
+            .flex_col()
+            .bg(BG_SURFACE)
+            .border_1()
+            .border_color(BORDER)
+            .rounded(px(9.))
+            .shadow(vec![BoxShadow { color: c(hexa(0, 0.45)), offset: point(px(0.), px(8.)), blur_radius: px(24.), spread_radius: px(0.), inset: false }])
+            .occlude()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.manager.sound_menu = false;
+                cx.notify();
+            }))
+            .children(options.into_iter().map(|(id, label)| {
+                let selected = id == current;
+                div()
+                    .id(SharedString::from(format!("sound-{id}")))
+                    .mx(px(4.))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(6.))
+                    .text_size(px(12.))
+                    .cursor_pointer()
+                    .map(|d| if selected { d.bg(hexa(0x228df2, 0.14)).text_color(ACCENT) } else { d.text_color(TEXT_PRIMARY).hover(|d| d.bg(BG_HOVER)) })
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.manager.sound_menu = false;
+                        set_values(this, &[("defaultSoundId", id.into())], cx);
+                    }))
+            }));
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                control("sound-select", open)
+                    .min_w(px(170.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.))
+                    .text_color(TEXT_PRIMARY)
+                    .child(prefs::sound_label(current))
+                    .child(div().text_color(TEXT_MUTED).text_size(px(10.)).child("▾"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.manager.sound_menu = !this.manager.sound_menu;
+                        cx.notify();
+                    })),
+            )
+            .when(open, |d| d.child(deferred(anchored().child(menu)).with_priority(2)))
+    }
+
+    /// General's stateful controls, made when the Settings window opens.
+    fn ensure_settings_controls(&mut self, cx: &mut Context<Self>) {
+        if self.manager.volume.is_some() {
+            return;
+        }
+        let value = prefs::default_volume(&self.store.app_settings());
+        let slider = cx.new(|_| SliderState::new().min(0.).max(1.).step(0.05).default_value(value));
+        self.manager._volume_sub = Some(cx.subscribe(&slider, |this, _, ev: &SliderEvent, cx| {
+            let SliderEvent::Change(v) = ev else { return };
+            let v = ((v.start() * 100.).round() / 100.) as f64;
+            if (v - prefs::default_volume(&this.store.app_settings()) as f64).abs() > 0.001 {
+                set_values(this, &[("defaultVolume", v.into())], cx);
+            }
+        }));
+        self.manager.volume = Some(slider);
+    }
+
+    /// Bring the controls with state of their own in line with settings saved elsewhere.
+    pub(crate) fn sync_settings_controls(&mut self, all: &prefs::Settings, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(slider) = &self.manager.volume {
+            let v = prefs::default_volume(all);
+            slider.update(cx, |s, cx| {
+                if (s.value().start() - v).abs() > 0.001 {
+                    s.set_value(v, window, cx);
+                }
+            });
+        }
+    }
+
+    /// Record the next chord as the focus-mode shortcut (settings-ui's HotkeyRecorder).
+    fn start_recording(&mut self, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        // Ahead of every key binding, so the chord being recorded doesn't fire.
+        let sub = cx.intercept_keystrokes(move |ev, _, cx| {
+            let k = ev.keystroke.clone();
+            if this.update(cx, |this, cx| this.record_hotkey(&k, cx)).is_ok() {
+                cx.stop_propagation();
+            }
+        });
+        self.manager.recording = true;
+        self.manager.hotkey_hint = None;
+        self.manager._recorder = Some(sub);
+        cx.notify();
+    }
+
+    fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        self.manager.recording = false;
+        // Not dropped from inside its own callback.
+        let sub = self.manager._recorder.take();
+        cx.defer(move |_| drop(sub));
+        cx.notify();
+    }
+
+    fn record_hotkey(&mut self, k: &Keystroke, cx: &mut Context<Self>) {
+        if !self.manager.recording {
+            return;
+        }
+        let bare = !(k.modifiers.platform || k.modifiers.control || k.modifiers.alt || k.modifiers.shift);
+        if k.key == "escape" && bare {
+            self.stop_recording(cx);
+            return;
+        }
+        if matches!(k.key.as_str(), "shift" | "control" | "alt" | "platform" | "function") {
+            return;
+        }
+        match Hotkey::from_keystroke(k) {
+            Some(h) => {
+                self.stop_recording(cx);
+                set_values(self, &[("focusModeHotkey", h.to_value())], cx);
+            }
+            None => {
+                self.manager.hotkey_hint = Some("Add a modifier (⌘ / ⌃ / ⌥).");
+                cx.notify();
+            }
+        }
     }
 }
 
@@ -267,6 +549,7 @@ fn header_button(id: &'static str, label: &'static str, primary: bool) -> Statef
 impl AppView {
     pub(crate) fn open_settings(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
         self.settings_tab = Some(tab);
+        self.ensure_settings_controls(cx);
         cx.notify();
     }
 
@@ -421,6 +704,7 @@ impl AppView {
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.settings_tab = Some(key);
+                    this.ensure_settings_controls(cx);
                     cx.notify();
                 }))
         };
@@ -513,7 +797,7 @@ impl AppView {
                 .occlude()
                 .on_click(cx.listener(|this, _, _, cx| this.close_settings(cx)))
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                    if ev.keystroke.key == "escape" && this.editor.is_none() {
+                    if ev.keystroke.key == "escape" && this.editor.is_none() && !this.manager.recording {
                         this.close_settings(cx);
                         cx.stop_propagation();
                     }

@@ -318,10 +318,10 @@ impl TerminalView {
                 self.terminal.write(fmt(size).into_bytes());
             }
             Event::ClipboardStore(_, text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
-            Event::ClipboardLoad(_, fmt) => {
-                let text = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
-                self.terminal.write(fmt(&text).into_bytes());
-            }
+            // OSC 52 reads are refused: any program's output (a remote host over
+            // SSH, a `cat` of a crafted file) could otherwise read the clipboard.
+            // Writes (OSC 52 copy) stay allowed.
+            Event::ClipboardLoad(..) => {}
             Event::Exit | Event::ChildExit(_) if !self.exited => {
                 self.exited = true;
                 cx.emit(TerminalEvent::Exited);

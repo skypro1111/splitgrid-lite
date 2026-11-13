@@ -409,6 +409,7 @@ impl SqlPane {
         }
         self.queue.clear();
         self.tx.open = false;
+        self.agent_settle();
     }
 
     /// No active connection: the console waits for one.
@@ -490,6 +491,7 @@ impl SqlPane {
             self.queue.clear();
             self.running = None;
             self.tx.open = false;
+            self.agent_settle();
             self.session = session.clone();
             if let Some(s) = &session {
                 self.completion.dialect.set(s.dialect);
