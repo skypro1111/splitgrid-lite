@@ -5,6 +5,8 @@
 use gpui_kit::component::input::{Editor, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 use sql_core::{Dialect, TableRef};
 
 use super::plan::Plan;
@@ -54,9 +56,9 @@ impl SqlPane {
         }
         let b = self.body_bounds.get();
         match drag {
-            Drag::Tree => self.tree_w = f32::from(ev.position.x - b.left()).clamp(140., f32::from(b.size.width) * 0.6),
-            Drag::Editor => self.editor_h = f32::from(ev.position.y - b.top()).clamp(60., (f32::from(b.size.height) - 90.).max(60.)),
-            Drag::Value => self.value_w = f32::from(b.right() - ev.position.x).clamp(180., f32::from(b.size.width) * 0.6),
+            Drag::Tree => self.tree_w = crate::ui::unpx(ev.position.x - b.left()).clamp(140., crate::ui::unpx(b.size.width) * 0.6),
+            Drag::Editor => self.editor_h = crate::ui::unpx(ev.position.y - b.top()).clamp(60., (crate::ui::unpx(b.size.height) - 90.).max(60.)),
+            Drag::Value => self.value_w = crate::ui::unpx(b.right() - ev.position.x).clamp(180., crate::ui::unpx(b.size.width) * 0.6),
         }
         cx.notify();
     }

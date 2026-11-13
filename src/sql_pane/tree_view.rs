@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 use sql_core::TableKind;
 
 use super::tree::{self, ConnStatus, Node, Scope, TreeRow};

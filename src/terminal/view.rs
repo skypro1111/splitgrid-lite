@@ -20,6 +20,8 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor};
 use futures::StreamExt;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 
 use super::colors;
 use super::keys::{self, Mods};
@@ -222,6 +224,12 @@ impl TerminalView {
     /// The shell's pid; None for a remote shell.
     pub fn shell_pid(&self) -> Option<i32> {
         self.terminal.session_leader()
+    }
+
+    /// The grid's (columns, rows).
+    pub fn grid_size(&self) -> (usize, usize) {
+        let term = self.terminal.term.lock();
+        (term.columns(), term.screen_lines())
     }
 
     /// Scrollback and screen as plain text: wrapped rows joined, trailing
@@ -580,7 +588,7 @@ fn metrics(cx: &App, font_size: f32) -> Metrics {
     let size = px(font_size);
     let cell_width = text.advance(font_id, size, 'm').map(|s| s.width).unwrap_or(px(font_size * 0.6));
     let natural = text.ascent(font_id, size) + text.descent(font_id, size).abs();
-    Metrics { font_size: size, cell_width, line_height: px(f32::from(natural).ceil()) }
+    Metrics { font_size: size, cell_width, line_height: gpui_kit::px(f32::from(natural).ceil()) }
 }
 
 /// Copy the visible grid into paintable rows. Runs under the `Term` lock: keep it lean.

@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 
 use crate::model::connections::{AuthMethod, ConnectionStore, SavedConnection};
 use crate::model::layout::{Direction, NodePath};
@@ -45,6 +47,9 @@ actions!(
         ZoomIn,
         ZoomOut,
         ZoomReset,
+        UiZoomIn,
+        UiZoomOut,
+        UiZoomReset,
         OpenSettings,
         Quit
     ]
@@ -80,10 +85,37 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd--", ZoomOut, Some("Terminal")),
         KeyBinding::new("cmd-0", ZoomReset, Some("Terminal")),
         KeyBinding::new("cmd-=", ZoomIn, Some("Ide")),
+        KeyBinding::new("cmd-+", ZoomIn, Some("Ide")),
         KeyBinding::new("cmd-shift-=", ZoomIn, Some("Ide")),
         KeyBinding::new("cmd--", ZoomOut, Some("Ide")),
         KeyBinding::new("cmd-0", ZoomReset, Some("Ide")),
+        // Everywhere else (sidebar, title strip, SQL / SFTP panes, text fields):
+        // the whole window's UI, like the Electron app's page zoom. The pane
+        // bindings above are deeper in the context stack, so they win there.
+        KeyBinding::new("cmd-=", UiZoomIn, None),
+        KeyBinding::new("cmd-+", UiZoomIn, None),
+        KeyBinding::new("cmd-shift-=", UiZoomIn, None),
+        KeyBinding::new("cmd--", UiZoomOut, None),
+        KeyBinding::new("cmd-0", UiZoomReset, None),
     ]);
+    // App-level, so they work from any window and with nothing focused.
+    cx.on_action(|_: &UiZoomIn, cx| ui_zoom(crate::ui::Step::In, cx));
+    cx.on_action(|_: &UiZoomOut, cx| ui_zoom(crate::ui::Step::Out, cx));
+    cx.on_action(|_: &UiZoomReset, cx| ui_zoom(crate::ui::Step::Reset, cx));
+}
+
+/// One whole-window zoom step: every window follows, and the level is saved.
+pub fn ui_zoom(step: crate::ui::Step, cx: &mut App) {
+    let level = crate::ui::step(crate::ui::level(), step);
+    if level == crate::ui::level() {
+        return;
+    }
+    crate::ui::apply(level, cx);
+    if let Some(shared) = cx.try_global::<crate::windows::Shared>()
+        && let Err(e) = shared.store.save_ui_zoom_level(level)
+    {
+        log::error!("saving the UI zoom: {e:#}");
+    }
 }
 
 const SAVE_DELAY: Duration = Duration::from_millis(400);
@@ -210,6 +242,8 @@ pub struct AppView {
     pub(crate) attention: crate::agent::attention::Attention,
     /// `app-settings.json`'s mtime when last looked at (the Electron app edits it too).
     app_settings_seen: Option<std::time::SystemTime>,
+    /// What SPLITGRID_DEBUG_LAYOUT printed last.
+    debug_layout_seen: Option<String>,
 }
 
 impl AppView {
@@ -340,6 +374,7 @@ impl AppView {
             agent: shared.agent.clone(),
             attention: Default::default(),
             app_settings_seen: None,
+            debug_layout_seen: None,
         }
     }
 
@@ -399,6 +434,8 @@ impl AppView {
 
     pub(crate) fn save_settings(&mut self) {
         self.settings.active_environment = self.env_id.clone();
+        // App-wide, and maybe changed from another window since this one loaded.
+        self.settings.ui_zoom_level = crate::ui::level();
         if let Err(e) = self.store.save_settings(&self.settings) {
             log::error!("saving settings: {e:#}");
         }
@@ -1357,7 +1394,7 @@ impl AppView {
                     return;
                 }
                 *pos = ev.position;
-                if !*active && (ev.position - *start).magnitude() > PANE_DRAG_THRESHOLD as f64 {
+                if !*active && (ev.position - *start).magnitude() > f64::from(PANE_DRAG_THRESHOLD * crate::ui::zoom()) {
                     *active = true;
                 }
                 if *active {
@@ -1365,7 +1402,8 @@ impl AppView {
                 }
             }
             Some(Drag::Sidebar) => {
-                self.settings.sidebar_width = f32::from(ev.position.x).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                // The width is kept (and saved) unscaled: it zooms with the rest.
+                self.settings.sidebar_width = crate::ui::unpx(ev.position.x).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
                 cx.notify();
             }
             Some(Drag::Split { path, horizontal }) => {
@@ -1386,6 +1424,40 @@ impl AppView {
                     cx.notify();
                 }
             }
+        }
+    }
+
+    /// SPLITGRID_DEBUG_LAYOUT=1: print the UI zoom and the key layout numbers
+    /// (last frame's) whenever they change, to check that zoom scales them alike.
+    fn debug_log_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::env::var_os("SPLITGRID_DEBUG_LAYOUT").is_none() {
+            return;
+        }
+        let mut out = format!(
+            "zoom={:.3} rem={:?} viewport={:?} sidebar_width={} ({:?} on screen) grid={:?}",
+            crate::ui::zoom(),
+            window.rem_size(),
+            window.viewport_size(),
+            self.settings.sidebar_width,
+            px(self.settings.sidebar_width),
+            *self.grid_bounds.borrow()
+        );
+        let mut ids: Vec<String> = self.pane_bounds.borrow().keys().cloned().collect();
+        ids.sort();
+        for id in ids {
+            let b = self.pane_bounds.borrow().get(&id).copied();
+            out.push_str(&format!("\n  pane {id}: {b:?}"));
+            if let Some(p) = self.panes.get(&id) {
+                let (cols, rows) = p.view.read(cx).grid_size();
+                out.push_str(&format!(" terminal {cols}x{rows} font {}", p.view.read(cx).font_size()));
+            }
+            if let Some(g) = self.browser_panes.get(&id).and_then(|e| e.pane.read(cx).debug_geometry()) {
+                out.push_str(&format!(" browser {g}"));
+            }
+        }
+        if self.debug_layout_seen.as_deref() != Some(out.as_str()) {
+            eprintln!("[layout-debug] {out}");
+            self.debug_layout_seen = Some(out);
         }
     }
 
@@ -1443,6 +1515,7 @@ impl Render for AppView {
         // Web views are native views over the window: which may show this frame.
         self.ensure_browser_panes(window, cx);
         self.present_browser_panes(cx);
+        self.debug_log_layout(window, cx);
 
         let sidebar = self.render_sidebar(window, cx);
         let grid = self.render_grid_area(window, cx);

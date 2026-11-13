@@ -16,6 +16,8 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 
 use crate::sftp::{self, Entry, Progress, SftpClient, TransferResult};
 use crate::sftp_format;
@@ -1291,7 +1293,7 @@ impl SftpPane {
         });
 
         let width_cell = side.width.clone();
-        let recorder = canvas(move |b, _, _| width_cell.set(f32::from(b.size.width)), |_, _, _, _| {}).absolute().size_full();
+        let recorder = canvas(move |b, _, _| width_cell.set(crate::ui::unpx(b.size.width)), |_, _, _, _| {}).absolute().size_full();
         let focus = side.focus.clone();
         let _ = window;
         div()

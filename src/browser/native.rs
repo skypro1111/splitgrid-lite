@@ -327,7 +327,11 @@ impl Native {
         unsafe { self.wk().stopLoading() };
     }
 
+    /// Page zoom (pane zoom × UI zoom); a no-op when it's already that.
     pub fn set_zoom(&self, factor: f64) {
+        if self.destroyed.get() || (unsafe { self.wk().pageZoom() } - factor).abs() < 1e-6 {
+            return;
+        }
         unsafe { self.wk().setPageZoom(factor) };
     }
 

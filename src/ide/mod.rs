@@ -16,6 +16,8 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 use serde::{Deserialize, Serialize};
 
 use crate::assets::icon;
@@ -675,7 +677,7 @@ impl Render for IdePane {
                         return;
                     }
                     let left = this.tree_focus_left();
-                    this.sidebar_width = (f32::from(ev.position.x) - left).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                    this.sidebar_width = (crate::ui::unpx(ev.position.x) - left).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
                     cx.notify();
                 }
             }))
@@ -823,7 +825,7 @@ impl IdePane {
             );
         }
         let left_cell = self.explorer_left.clone();
-        let recorder = canvas(move |b, _, _| left_cell.set(f32::from(b.left())), |_, _, _, _| {}).absolute().size_full();
+        let recorder = canvas(move |b, _, _| left_cell.set(crate::ui::unpx(b.left())), |_, _, _, _| {}).absolute().size_full();
         div()
             .relative()
             .w(px(self.sidebar_width))

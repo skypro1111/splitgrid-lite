@@ -634,7 +634,7 @@ impl SqlPane {
             if nk == tree::NavKey::Space && self.type_ahead_active() {
                 return self.type_char(" ", window, cx);
             }
-            let page = (f32::from(self.body_bounds.get().size.height) / super::view::TREE_ROW_H) as usize;
+            let page = (crate::ui::unpx(self.body_bounds.get().size.height) / super::view::TREE_ROW_H) as usize;
             if let Some(cmd) = tree::nav(&rows, self.tree.selected.as_deref(), nk, page.saturating_sub(3)) {
                 self.run_cmd(cmd, window, cx);
             }

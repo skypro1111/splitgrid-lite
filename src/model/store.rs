@@ -41,6 +41,9 @@ pub struct NativeSettings {
     pub sidebar_width: f32,
     #[serde(default)]
     pub sidebar_collapsed: bool,
+    /// Whole-window UI zoom, as a Chromium zoom level (0 = 100%, ±0.5 a step; crate::ui).
+    #[serde(default)]
+    pub ui_zoom_level: f32,
 }
 
 fn default_env() -> String {
@@ -54,7 +57,7 @@ fn default_sidebar_width() -> f32 {
 
 impl Default for NativeSettings {
     fn default() -> Self {
-        Self { active_environment: default_env(), sidebar_width: default_sidebar_width(), sidebar_collapsed: false }
+        Self { active_environment: default_env(), sidebar_width: default_sidebar_width(), sidebar_collapsed: false, ui_zoom_level: 0. }
     }
 }
 
@@ -241,6 +244,14 @@ impl Store {
     pub fn save_settings(&self, s: &NativeSettings) -> Result<()> {
         write_atomic(&self.dir.join(SETTINGS_FILE), &serde_json::to_vec_pretty(s)?)
     }
+
+    /// Persist the UI zoom level alone: read-modify-write, so the other fields
+    /// another window saved stay as they are.
+    pub fn save_ui_zoom_level(&self, level: f32) -> Result<()> {
+        let mut s = self.settings();
+        s.ui_zoom_level = level;
+        self.save_settings(&s)
+    }
 }
 
 /// Environment ids become file names: keep them to safe characters, like SplitGrid does.
@@ -286,7 +297,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let old = dir.path().join("old");
         fs::create_dir_all(&old).unwrap();
-        let s = NativeSettings { active_environment: "env-x".into(), sidebar_width: 300., sidebar_collapsed: true };
+        let s = NativeSettings { active_environment: "env-x".into(), sidebar_width: 300., sidebar_collapsed: true, ui_zoom_level: 0. };
         Store::open(old.clone()).unwrap().save_settings(&s).unwrap();
         let store = Store::open(dir.path().join("shared")).unwrap();
         store.adopt_settings(&old);
@@ -348,9 +359,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path().to_path_buf()).unwrap();
         assert_eq!(store.settings(), NativeSettings::default());
-        let s = NativeSettings { active_environment: "env-x".into(), sidebar_width: 300., sidebar_collapsed: true };
+        let s = NativeSettings { active_environment: "env-x".into(), sidebar_width: 300., sidebar_collapsed: true, ui_zoom_level: 0. };
         store.save_settings(&s).unwrap();
         assert_eq!(store.settings(), s);
+    }
+
+    #[test]
+    fn ui_zoom_level_persists_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().to_path_buf()).unwrap();
+        // Older files have no zoom: 100%.
+        fs::write(dir.path().join(SETTINGS_FILE), br#"{"activeEnvironment":"env-x","sidebarWidth":250}"#).unwrap();
+        assert_eq!(store.settings().ui_zoom_level, 0.);
+        store.save_ui_zoom_level(1.5).unwrap();
+        let s = store.settings();
+        assert_eq!(s.ui_zoom_level, 1.5);
+        assert_eq!((s.active_environment.as_str(), s.sidebar_width), ("env-x", 250.), "the rest untouched");
     }
 }
 

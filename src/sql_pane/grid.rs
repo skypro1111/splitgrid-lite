@@ -17,6 +17,8 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 use sql_core::{Column, ForeignKey, Row, TableRef, Value};
 use sql_lang::{EditSource, RowEdit};
 
@@ -86,7 +88,7 @@ impl Measure {
     fn new(cx: &App) -> Self {
         let text = cx.text_system().clone();
         let font = text.resolve_font(&font(UI_FONT));
-        let advance = |ch: char| text.advance(font, px(FONT_SIZE), ch).map(|s| f32::from(s.width)).unwrap_or(FONT_SIZE * 0.6);
+        let advance = |ch: char| text.advance(font, gpui_kit::px(FONT_SIZE), ch).map(|s| f32::from(s.width)).unwrap_or(FONT_SIZE * 0.6);
         let ascii = std::array::from_fn(|i| advance(i as u8 as char));
         Measure { text: text.clone(), font, ascii }
     }
@@ -97,7 +99,7 @@ impl Measure {
             .chars()
             .map(|ch| match self.ascii.get(ch as usize) {
                 Some(w) => *w,
-                None => self.text.advance(self.font, px(FONT_SIZE), ch).map(|s| f32::from(s.width)).unwrap_or(FONT_SIZE),
+                None => self.text.advance(self.font, gpui_kit::px(FONT_SIZE), ch).map(|s| f32::from(s.width)).unwrap_or(FONT_SIZE),
             })
             .sum();
         w * size / FONT_SIZE
@@ -335,7 +337,7 @@ impl ResultGrid {
     /// The cell area's size (viewport minus header and gutter).
     fn body_size(&self) -> (f32, f32) {
         let b = self.bounds.get();
-        ((f32::from(b.size.width) - self.gutter_w()).max(0.), (f32::from(b.size.height) - HEADER_H).max(0.))
+        ((crate::ui::unpx(b.size.width) - self.gutter_w()).max(0.), (crate::ui::unpx(b.size.height) - HEADER_H).max(0.))
     }
 
     fn content_size(&self) -> (f32, f32) {
@@ -352,7 +354,7 @@ impl ResultGrid {
     /// A window position in content coordinates (relative to the first cell, scroll applied).
     fn to_content(&self, pos: Point<Pixels>) -> (f32, f32) {
         let o = self.bounds.get().origin;
-        (f32::from(pos.x - o.x) - self.gutter_w() + self.scroll_x, f32::from(pos.y - o.y) - HEADER_H + self.scroll_y)
+        (crate::ui::unpx(pos.x - o.x) - self.gutter_w() + self.scroll_x, crate::ui::unpx(pos.y - o.y) - HEADER_H + self.scroll_y)
     }
 
     /// The cell at a content position, clamped into the grid (for drags past its edges).
@@ -631,7 +633,7 @@ impl ResultGrid {
             self.set_width(col, w);
             self.drag = None;
         } else {
-            self.drag = Some(Drag::Resize { col, start_x: f32::from(ev.position.x), start_w: self.widths[col] });
+            self.drag = Some(Drag::Resize { col, start_x: crate::ui::unpx(ev.position.x), start_w: self.widths[col] });
         }
         cx.notify();
     }
@@ -641,17 +643,17 @@ impl ResultGrid {
         let (bw, bh) = self.body_size();
         let (cw, ch) = self.content_size();
         match drag {
-            Drag::Resize { col, start_x, start_w } => self.set_width(col, start_w + f32::from(pos.x) - start_x),
+            Drag::Resize { col, start_x, start_w } => self.set_width(col, start_w + crate::ui::unpx(pos.x) - start_x),
             Drag::VBar { grab } => {
                 let o = self.bounds.get().origin;
                 let (thumb, track) = thumb(bh, ch);
-                let y = f32::from(pos.y - o.y) - HEADER_H - grab;
+                let y = crate::ui::unpx(pos.y - o.y) - HEADER_H - grab;
                 self.scroll_y = y / (bh - thumb).max(1.) * track;
             }
             Drag::HBar { grab } => {
                 let o = self.bounds.get().origin;
                 let (thumb, track) = thumb(bw, cw);
-                let x = f32::from(pos.x - o.x) - self.gutter_w() - grab;
+                let x = crate::ui::unpx(pos.x - o.x) - self.gutter_w() - grab;
                 self.scroll_x = x / (bw - thumb).max(1.) * track;
             }
             Drag::Cells | Drag::Rows | Drag::Cols => {
@@ -683,8 +685,8 @@ impl ResultGrid {
 
     fn on_wheel(&mut self, ev: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
         let d = ev.delta.pixel_delta(px(ROW_H));
-        self.scroll_x -= f32::from(d.x);
-        self.scroll_y -= f32::from(d.y);
+        self.scroll_x -= crate::ui::unpx(d.x);
+        self.scroll_y -= crate::ui::unpx(d.y);
         self.clamp_scroll();
         cx.stop_propagation();
         cx.notify();
@@ -989,7 +991,7 @@ impl Render for ResultGrid {
                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                         cx.stop_propagation();
                         let o = this.bounds.get().origin;
-                        this.drag = Some(Drag::VBar { grab: f32::from(ev.position.y - o.y) - HEADER_H - top });
+                        this.drag = Some(Drag::VBar { grab: crate::ui::unpx(ev.position.y - o.y) - HEADER_H - top });
                         cx.notify();
                     }),
                 )
@@ -1010,7 +1012,7 @@ impl Render for ResultGrid {
                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                         cx.stop_propagation();
                         let o = this.bounds.get().origin;
-                        this.drag = Some(Drag::HBar { grab: f32::from(ev.position.x - o.x) - this.gutter_w() - left });
+                        this.drag = Some(Drag::HBar { grab: crate::ui::unpx(ev.position.x - o.x) - this.gutter_w() - left });
                         cx.notify();
                     }),
                 )

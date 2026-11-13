@@ -26,6 +26,8 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 
 use crate::theme::*;
 use native::{Native, Signal};
@@ -228,10 +230,8 @@ impl BrowserPane {
         });
 
         let zoom = font_size.map_or(1., zoom_factor);
-        if let Some(n) = &native
-            && (zoom - 1.).abs() > f64::EPSILON
-        {
-            n.set_zoom(zoom);
+        if let Some(n) = &native {
+            n.set_zoom(zoom * f64::from(crate::ui::zoom()));
         }
         let mut pane = Self {
             native,
@@ -347,8 +347,14 @@ impl BrowserPane {
     pub(crate) fn set_font_size(&mut self, size: f32) {
         self.zoom = zoom_factor(size);
         if let Some(n) = &self.native {
-            n.set_zoom(self.zoom);
+            n.set_zoom(self.zoom * f64::from(crate::ui::zoom()));
         }
+    }
+
+    /// The web view's native frame and the page's CSS viewport, for diagnostics.
+    pub(crate) fn debug_geometry(&self) -> Option<String> {
+        let n = self.native.as_ref()?;
+        Some(format!("frame={} viewport={:?}", n.debug_frame(), n.viewport()))
     }
 
     pub(crate) fn font_size(&self) -> f32 {
@@ -693,8 +699,11 @@ impl Render for BrowserPane {
                 )
             });
 
-        // The page's slot: the web view is placed over it as this paints.
+        // The page's slot: the web view is placed over it as this paints, in
+        // window points (the zoomed layout's), and its page follows the UI
+        // zoom on top of the pane's own (Electron's page zoom scales guests too).
         let native = self.native.clone();
+        let page_zoom = self.zoom * f64::from(crate::ui::zoom());
         let page = div()
             .relative()
             .flex_1()
@@ -704,6 +713,7 @@ impl Render for BrowserPane {
                 canvas(
                     move |b, _, _| {
                         if let Some(n) = native {
+                            n.set_zoom(page_zoom);
                             n.place(f64::from(f32::from(b.origin.x)), f64::from(f32::from(b.origin.y)), f64::from(f32::from(b.size.width)), f64::from(f32::from(b.size.height)));
                         }
                     },

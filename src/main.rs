@@ -24,6 +24,7 @@ mod sidebar;
 mod sql_pane;
 mod terminal;
 mod theme;
+mod ui;
 mod windows;
 
 use gpui_kit::*;
@@ -86,6 +87,13 @@ fn main() {
     application().with_assets(assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
         theme::apply_to_components(cx);
+        // Whole-window UI zoom (⌘+ / ⌘− / ⌘0 outside the panes), as last saved.
+        // SPLITGRID_DEBUG_UI_ZOOM=<factor> overrides it for this run (not saved).
+        let level = match std::env::var("SPLITGRID_DEBUG_UI_ZOOM").ok().and_then(|v| v.parse::<f32>().ok()).filter(|f| *f > 0.) {
+            Some(f) => f.ln() / 1.2f32.ln(),
+            None => store.settings().ui_zoom_level,
+        };
+        ui::apply(level, cx);
         app::bind_keys(cx);
         ide::bind_keys(cx);
         sql_pane::bind_keys(cx);
@@ -103,6 +111,16 @@ fn main() {
                     MenuItem::separator(),
                     MenuItem::action("Open Env…", app::OpenEnvironments),
                     MenuItem::action("Settings…", app::OpenSettings),
+                ],
+                disabled: false,
+            },
+            // Electron's default View menu: whole-window zoom.
+            Menu {
+                name: "View".into(),
+                items: vec![
+                    MenuItem::action("Actual Size", app::UiZoomReset),
+                    MenuItem::action("Zoom In", app::UiZoomIn),
+                    MenuItem::action("Zoom Out", app::UiZoomOut),
                 ],
                 disabled: false,
             },

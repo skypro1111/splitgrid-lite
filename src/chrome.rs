@@ -5,6 +5,8 @@ use gpui_kit::component::input::{Input, Textarea};
 use gpui_kit::component::Sizable as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 
 use crate::app::{AppView, Popover, PopoverKind, Renaming};
 use crate::assets::icon;

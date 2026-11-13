@@ -3,6 +3,8 @@
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+// Zoom-aware: scales with the whole-window UI zoom (crate::ui).
+use crate::ui::px;
 
 use crate::app::{AppView, Drag};
 use crate::assets::icon;
@@ -631,7 +633,7 @@ impl AppView {
         let ws = self.state.active()?;
         let container = ws.container(id)?;
         let tile = self.pane_bounds.borrow().get(id).copied();
-        let (w, h) = tile.map_or((280., 200.), |b| (f32::from(b.size.width), f32::from(b.size.height)));
+        let (w, h) = tile.map_or((280., 200.), |b| (crate::ui::unpx(b.size.width), crate::ui::unpx(b.size.height)));
         let scale = (280. / w).min(200. / h).min(1.);
         let (gw, gh) = (w * scale, h * scale);
         let content = &container.content;
