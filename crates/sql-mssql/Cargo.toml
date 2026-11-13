@@ -1,0 +1,20 @@
+[package]
+name = "sql-mssql"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+sql-core.workspace = true
+# Pinned: 0.13 hard-wires the aws-lc-rs rustls provider (a C crypto build and a
+# second provider next to the app's ring). 0.12.3 uses rustls 0.21 on ring.
+# The PRINT/row-count capture in `tap.rs` reads tiberius's own trace events,
+# so a version bump must re-check their wording.
+tiberius = { version = "=0.12.3", default-features = false, features = ["tds73", "rustls"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tracing = "0.1"

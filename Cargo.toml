@@ -1,0 +1,68 @@
+[workspace]
+members = [".", "crates/*"]
+resolver = "3"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+sql-core = { path = "crates/sql-core" }
+
+[package]
+name = "splitgrid"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui-kit = { version = "=0.9.1", default-features = false, features = ["component", "assets", "tree-sitter-languages"] }
+alacritty_terminal = "0.26"
+aes-gcm = "0.10"
+anyhow = "1"
+base64 = "0.22"
+futures = "0.3"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+trash = "5"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "fs", "io-util"] }
+log = "0.4"
+lsp-types = "0.97"
+notify = "8"
+rand = "0.9"
+regex = "1"
+russh-sftp = "3"
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+scrypt = { version = "0.11", default-features = false }
+env_logger = "0.11"
+# The browser pane: WKWebView embedded as a child NSView of the gpui window.
+# objc2 crates pinned to the line wry is built against.
+wry = { version = "0.55", default-features = false, features = ["devtools"] }
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-web-kit = "0.3"
+objc2-core-foundation = "0.3"
+sql-core = { path = "crates/sql-core" }
+sql-lang = { path = "crates/sql-lang" }
+sql-postgres = { path = "crates/sql-postgres" }
+sql-mysql = { path = "crates/sql-mysql" }
+sql-sqlite = { path = "crates/sql-sqlite" }
+sql-mssql = { path = "crates/sql-mssql" }
+
+# Dependencies optimised even in debug: an unoptimised VT parser/renderer makes
+# any performance judgement of the spike meaningless.
+[dev-dependencies]
+tempfile = "3"
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

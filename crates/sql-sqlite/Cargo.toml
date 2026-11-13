@@ -1,0 +1,18 @@
+[package]
+name = "sql-sqlite"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+sql-core.workspace = true
+rusqlite = { version = "0.40", features = ["bundled", "column_decltype", "column_metadata"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true }

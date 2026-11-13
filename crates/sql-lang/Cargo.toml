@@ -1,0 +1,9 @@
+[package]
+name = "sql-lang"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+sql-core.workspace = true
+serde_json.workspace = true

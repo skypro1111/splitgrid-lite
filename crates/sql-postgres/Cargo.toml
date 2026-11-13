@@ -1,0 +1,16 @@
+[package]
+name = "sql-postgres"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+sql-core.workspace = true
+tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-platform-verifier = "0.7"

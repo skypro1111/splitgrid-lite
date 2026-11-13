@@ -1,0 +1,16 @@
+[package]
+name = "sql-mysql"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+sql-core.workspace = true
+# rustls with ring only: no OpenSSL/native-tls, no aws-lc build.
+mysql_async = { version = "0.37", default-features = false, features = ["default-rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
