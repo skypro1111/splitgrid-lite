@@ -109,6 +109,7 @@ impl AppView {
             .bg(BG_PRIMARY)
             .border_r_1()
             .border_color(BORDER)
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| this.focus_window_chrome(window, cx)))
             .child(self.render_sidebar_header(collapsed, cx))
             .child(self.render_workspace_list(collapsed, cx))
             .child(self.render_bottom_bar(collapsed, cx))

@@ -31,7 +31,7 @@ fn popover_shadow() -> Vec<BoxShadow> {
 
 impl AppView {
     /// 36px strip under the traffic lights: the active workspace's name, centred; drags the window.
-    pub(crate) fn render_title_strip(&self, _cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_title_strip(&self, cx: &mut Context<Self>) -> AnyElement {
         let name = self.state.active().map(|w| w.name.clone()).unwrap_or_else(|| "Workspace".into());
         div()
             .id("title-strip")
@@ -42,6 +42,7 @@ impl AppView {
             .bg(BG_PRIMARY)
             .border_b_1()
             .border_color(BORDER)
+            .capture_any_mouse_down(cx.listener(|this, _, window, cx| this.focus_window_chrome(window, cx)))
             .on_mouse_down(MouseButton::Left, |ev, window, _| {
                 if ev.click_count == 2 {
                     window.titlebar_double_click();

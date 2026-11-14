@@ -184,6 +184,9 @@ pub struct AppView {
     pub(crate) drag: Option<Drag>,
     save_task: Option<Task<()>>,
     focus_pending: bool,
+    /// Keyboard focus "on the window itself" (sidebar, title strip): no pane's
+    /// key context, so ⌘+/− zoom the window rather than a pane's font.
+    pub(crate) root_focus: FocusHandle,
     /// The pane shown alone over the grid (focus mode), if any.
     pub(crate) focus_mode: Option<String>,
     /// Focus mode's open/close reveal: (start, closing).
@@ -338,6 +341,7 @@ impl AppView {
             drag: None,
             save_task: None,
             focus_pending: true,
+            root_focus: cx.focus_handle(),
             focus_mode: None,
             focus_anim: None,
             focus_from: None,
@@ -1260,6 +1264,13 @@ impl AppView {
         }
     }
 
+    /// A press on the window's own chrome (sidebar, title strip) takes keyboard
+    /// focus off the panes. Capture phase, so a text field or a workspace switch
+    /// under the pointer still focuses what it wants afterwards.
+    pub(crate) fn focus_window_chrome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.root_focus.focus(window, cx);
+    }
+
     fn focus_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.state.active().and_then(|w| w.focused_container_id.clone()) else { return };
         if let Some(pane) = self.panes.get(&id) {
@@ -1554,6 +1565,7 @@ impl Render for AppView {
             .font_family(UI_FONT)
             .text_size(px(13.))
             .when(dragging, |d| d.cursor_grabbing())
+            .track_focus(&self.root_focus)
             .on_mouse_move(cx.listener(Self::on_drag_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_drag_end))
             .on_action(cx.listener(|this, _: &SplitRight, _, cx| this.split(Direction::Horizontal, None, cx)))
