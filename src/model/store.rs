@@ -3,9 +3,8 @@
 //!   environment-names.json        { "<env>": "Display name" }
 //!   native-settings.json          this app's own UI state
 //!
-//! The directory is this app's own (`SplitGrid Native`). On first run it copies
-//! the Electron app's environments in; the original files are only ever read, so
-//! both apps can be used side by side without writing over each other.
+//! The directory is the Electron app's own (`SplitGrid`): both apps read and
+//! write the same files. `native-settings.json` is the only file just Lite uses.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -151,18 +150,6 @@ impl Store {
         self.dir.join(format!("recent-workspaces-{}.json", sanitize(env)))
     }
 
-    /// This app's own settings from the directory it used before sharing
-    /// SplitGrid's, once (nothing to do when they are here already).
-    pub fn adopt_settings(&self, old_dir: &Path) {
-        let (from, to) = (old_dir.join(SETTINGS_FILE), self.dir.join(SETTINGS_FILE));
-        if !to.exists()
-            && let Ok(bytes) = fs::read(&from)
-            && let Err(e) = write_atomic(&to, &bytes)
-        {
-            log::error!("copying settings from {}: {e:#}", from.display());
-        }
-    }
-
     fn names(&self) -> BTreeMap<String, String> {
         fs::read(self.dir.join(NAMES_FILE))
             .ok()
@@ -290,21 +277,6 @@ mod tests {
         assert!(store.delete_env(DEFAULT_ENV).is_err());
         store.delete_env(&id).unwrap();
         assert_eq!(store.list_envs().len(), 1);
-    }
-
-    #[test]
-    fn adopts_old_settings_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let old = dir.path().join("old");
-        fs::create_dir_all(&old).unwrap();
-        let s = NativeSettings { active_environment: "env-x".into(), sidebar_width: 300., sidebar_collapsed: true, ui_zoom_level: 0. };
-        Store::open(old.clone()).unwrap().save_settings(&s).unwrap();
-        let store = Store::open(dir.path().join("shared")).unwrap();
-        store.adopt_settings(&old);
-        assert_eq!(store.settings(), s);
-        store.save_settings(&NativeSettings::default()).unwrap();
-        store.adopt_settings(&old);
-        assert_eq!(store.settings(), NativeSettings::default(), "never over what is there");
     }
 
     #[test]

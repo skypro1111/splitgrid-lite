@@ -70,7 +70,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-    store.adopt_settings(&app_support_dir("SplitGrid Native"));
 
     // The agent hooks and skills Agent integrations ask for (off: nothing is touched).
     let installer = agent::install::Installer::new(&data_dir);

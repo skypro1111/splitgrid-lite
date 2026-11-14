@@ -57,5 +57,10 @@ if [ "${1:-}" = "--install" ]; then
   fi
   rm -rf "$DEST"
   ditto "$APP" "$DEST"
+  # Leave one copy: a second "SplitGrid Lite.app" under target/ would show up in
+  # Spotlight, Launchpad and notification settings next to the installed one.
+  LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  "$LSREGISTER" -u "$APP" 2>/dev/null || true
+  rm -rf "$APP"
   echo "installed $DEST"
 fi
