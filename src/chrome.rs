@@ -452,23 +452,52 @@ impl AppView {
                 .child(label)
         };
         let (r_id, f_id, d_id, s_id) = (ws_id.clone(), ws_id.clone(), ws_id.clone(), ws_id.clone());
+        let menu = || {
+            div()
+                .id("ws-menu")
+                .min_w(px(200.))
+                .p(px(4.))
+                .flex()
+                .flex_col()
+                .bg(BG_SURFACE)
+                .border_1()
+                .border_color(BORDER)
+                .rounded(px(8.))
+                .shadow(popover_shadow())
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_popover(cx)))
+        };
+        // SplitGrid asks before closing: "Close <name>?" — Cancel / Close workspace.
+        if self.ws_menu_confirm {
+            let confirm = menu()
+                .child(
+                    div()
+                        .px(px(10.))
+                        .pt(px(6.))
+                        .pb(px(4.))
+                        .max_w(px(220.))
+                        .flex()
+                        .flex_wrap()
+                        .gap_x(px(4.))
+                        .text_size(px(12.))
+                        .text_color(TEXT_MUTED)
+                        .child("Close")
+                        .child(div().font_weight(FontWeight::SEMIBOLD).text_color(TEXT_PRIMARY).child(ws.name.clone()))
+                        .child("?"),
+                )
+                .child(div().my(px(4.)).h(px(1.)).bg(BORDER))
+                .child(item("ws-menu-cancel", "Cancel".into(), false).on_click(cx.listener(|this, _, _, cx| this.close_popover(cx))))
+                .child(item("ws-menu-close", "Close workspace".into(), true).on_click(cx.listener(move |this, _, window, cx| {
+                    this.close_popover(cx);
+                    this.close_workspace(&d_id, window, cx);
+                })));
+            return deferred(anchored().position(at).snap_to_window_with_margin(px(8.)).child(confirm)).with_priority(1).into_any_element();
+        }
         // Workspace SFTP sync (configured in the Electron app's workspace settings).
         let sync = self.sync_menu_entry(ws);
         deferred(
             anchored().position(at).snap_to_window_with_margin(px(8.)).child(
-                div()
-                    .id("ws-menu")
-                    .min_w(px(200.))
-                    .p(px(4.))
-                    .flex()
-                    .flex_col()
-                    .bg(BG_SURFACE)
-                    .border_1()
-                    .border_color(BORDER)
-                    .rounded(px(8.))
-                    .shadow(popover_shadow())
-                    .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_popover(cx)))
+                menu()
                     .child(item("ws-menu-rename", "Rename".into(), false).on_click(cx.listener(move |this, _, window, cx| {
                         this.popover = None;
                         this.start_rename(Renaming::Workspace(r_id.clone()), name.clone(), window, cx);
@@ -493,9 +522,9 @@ impl AppView {
                         )
                     })
                     .child(div().my(px(4.)).h(px(1.)).bg(BORDER))
-                    .child(item("ws-menu-delete", "Delete workspace".into(), true).on_click(cx.listener(move |this, _, window, cx| {
-                        this.close_popover(cx);
-                        this.delete_workspace(&d_id, window, cx);
+                    .child(item("ws-menu-close", "Close workspace…".into(), true).on_click(cx.listener(|this, _, _, cx| {
+                        this.ws_menu_confirm = true;
+                        cx.notify();
                     }))),
             ),
         )

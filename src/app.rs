@@ -202,6 +202,8 @@ pub struct AppView {
     /// The "+ workspace → Open Recent" list, read when that menu opens; and whether its flyout shows.
     pub(crate) recent_workspaces: Vec<Workspace>,
     pub(crate) recent_flyout: bool,
+    /// The workspace menu is asking "Close <name>?".
+    pub(crate) ws_menu_confirm: bool,
     /// Whether the pointer is over the "Open Recent" row / its flyout; the flyout
     /// closes a beat after it leaves both, so the pointer can cross the seam.
     pub(crate) recent_hover: [bool; 2],
@@ -346,6 +348,7 @@ impl AppView {
             popover: None,
             recent_workspaces: Vec::new(),
             recent_flyout: false,
+            ws_menu_confirm: false,
             recent_hover: [false; 2],
             recent_close: None,
             env_picker_open: false,
@@ -582,7 +585,7 @@ impl AppView {
         self.changed(cx);
     }
 
-    pub(crate) fn delete_workspace(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_workspace(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.state.workspaces.iter().position(|w| w.id == id) else { return };
         let ws = self.state.workspaces.remove(ix);
         // Reopenable from "+ workspace → Open Recent" (the Electron app keeps the same list).
@@ -718,6 +721,7 @@ impl AppView {
             self.recent_flyout = false;
             self.recent_hover = [false; 2];
         }
+        self.ws_menu_confirm = false;
         self.popover = Some(Popover { kind, at });
         cx.notify();
     }
