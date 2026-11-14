@@ -1305,6 +1305,17 @@ impl AppView {
     }
 
     /// Zoom the focused pane's terminal: `Some(step)` in points, `None` to reset.
+    /// ⌘+ / ⌘− / ⌘0 from the View menu: the focused pane's font when the keyboard
+    /// is in a terminal, IDE or browser pane, else the window zoom (propagated).
+    fn pane_or_ui_zoom(&mut self, step: Option<f32>, window: &mut Window, cx: &mut Context<Self>) {
+        let in_pane = window.context_stack().iter().any(|c| c.contains("Terminal") || c.contains("Ide") || c.contains("BrowserPane"));
+        if in_pane {
+            self.zoom_focused(step, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
     fn zoom_focused(&mut self, step: Option<f32>, cx: &mut Context<Self>) {
         let Some(id) = self.state.active().and_then(|w| w.focused_container_id.clone()) else { return };
         let applied = if let Some(pane) = self.panes.get(&id) {
@@ -1562,6 +1573,12 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom_focused(Some(1.), cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom_focused(Some(-1.), cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom_focused(None, cx)))
+            // The View menu's Zoom items own ⌘+ / ⌘− / ⌘0 as macOS key equivalents, so
+            // the key arrives as UiZoom* even inside a pane: there it is the pane's font
+            // size (as in SplitGrid); elsewhere it bubbles to the app's window zoom.
+            .on_action(cx.listener(|this, _: &UiZoomIn, window, cx| this.pane_or_ui_zoom(Some(1.), window, cx)))
+            .on_action(cx.listener(|this, _: &UiZoomOut, window, cx| this.pane_or_ui_zoom(Some(-1.), window, cx)))
+            .on_action(cx.listener(|this, _: &UiZoomReset, window, cx| this.pane_or_ui_zoom(None, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(crate::settings::SettingsTab::Ssh, cx)))
             .on_action(cx.listener(|this, _: &Quit, _, cx| {
                 this.flush();
