@@ -734,6 +734,22 @@ mod tests {
     }
 
     #[test]
+    fn history_skill_needs_integrations_and_history_consent() {
+        let f = fixture();
+        let skill = f.claude.join("skills/sg-history/SKILL.md");
+        settings(&f, json!({"historyEnabled": true}));
+        f.inst.startup();
+        assert!(!skill.exists(), "consent alone installs nothing");
+        settings(&f, json!({"agentIntegrations": true, "historyEnabled": true}));
+        f.inst.apply();
+        assert!(skill.is_file());
+        settings(&f, json!({"agentIntegrations": true, "historyEnabled": false}));
+        f.inst.apply();
+        assert!(!skill.exists(), "consent withdrawn removes it");
+        assert!(f.claude.join("skills/sg-browser").exists());
+    }
+
+    #[test]
     fn skills_leave_foreign_copies_and_refresh_their_own() {
         let f = fixture();
         let skills = f.claude.join("skills");

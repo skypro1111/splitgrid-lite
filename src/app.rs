@@ -437,6 +437,7 @@ impl AppView {
         if let Err(e) = self.store.save(&self.env_id, &self.state) {
             log::error!("saving environment {}: {e:#}", self.env_id);
         }
+        crate::history::workspaces_saved(&self.env_id, &self.state);
     }
 
     pub(crate) fn save_settings(&mut self) {

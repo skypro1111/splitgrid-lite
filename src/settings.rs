@@ -4,8 +4,11 @@
 //! General holds every Electron setting this app acts on, stored in the shared
 //! `app-settings.json` as patches (keys this app doesn't know are kept). Left
 //! out because Lite has no such feature (yet): the background colour, the
-//! terminal renderer and Windows shell, browser-extension control, Workspace
-//! history, the Claude Code pane, and the Fast chat and Account tabs.
+//! terminal renderer and Windows shell, browser-extension control, the Claude
+//! Code pane, and the Fast chat and Account tabs. Workspace history acts
+//! through its service rather than as a plain switch (settings/history.rs).
+
+mod history;
 
 use std::collections::{HashMap, HashSet};
 
@@ -57,6 +60,8 @@ pub struct ManagerState {
     pub(crate) recording: bool,
     hotkey_hint: Option<&'static str>,
     _recorder: Option<Subscription>,
+    /// Settings → Workspace history's own state.
+    pub(crate) history: history::HistoryUi,
 }
 
 // ── General ──────────────────────────────────────────────────────────────────
@@ -396,6 +401,8 @@ impl AppView {
             .child(terminal_card)
             .child(shortcuts)
             .child(agents)
+            // Acts immediately (consent → download): historyEnabled is saved once the install succeeded.
+            .child(self.render_history(integrations, cx))
             .into_any_element()
     }
 

@@ -60,6 +60,8 @@ fn dispatch(req: Request, cx: &mut App) {
         }
         // Hooks from a terminal that's gone: nothing to do. Commands: say so.
         None if req.kind == "hook" => req.respond(json!({})),
+        // History is gated before anything else, even for a terminal no window holds.
+        None if req.kind == "history" => crate::agent::history_cmd::handle_unowned(req, cx),
         None => req.respond(json!({ "ok": false, "error": "unknown_terminal", "message": "cannot locate the calling terminal's workspace" })),
     }
 }

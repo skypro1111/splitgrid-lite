@@ -62,6 +62,8 @@ sql-mysql = { path = "crates/sql-mysql" }
 sql-sqlite = { path = "crates/sql-sqlite" }
 sql-mssql = { path = "crates/sql-mssql" }
 rust_xlsxwriter = { version = "0.102", default-features = false }
+# Workspace history (src/history.rs, src/agent/history_cmd.rs, Settings).
+sg-history = { path = "crates/sg-history" }
 
 # Dependencies optimised even in debug: an unoptimised VT parser/renderer makes
 # any performance judgement of the spike meaningless.

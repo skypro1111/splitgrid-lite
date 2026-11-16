@@ -10,6 +10,7 @@
 pub mod activity;
 pub mod attention;
 pub mod browser_cmd;
+pub mod history_cmd;
 pub mod install;
 pub mod notify;
 pub mod server;
@@ -95,6 +96,8 @@ impl AgentConfig {
         }
         sftp_cmd::add_env(self, &mut env);
         sql_cmd::add_env(self, &mut env);
+        // Workspace history: Agent integrations AND the user's history consent.
+        history_cmd::add_env(self, &mut env);
         env
     }
 }
@@ -263,6 +266,7 @@ impl crate::app::AppView {
             }
             "sftp" => self.handle_sftp_request(req, &cfg, cx),
             "sql" => self.handle_sql_request(req, &cfg, window, cx),
+            "history" => self.handle_history_request(req, &cfg, cx),
             other => req.respond(json!({
                 "ok": false,
                 "error": "not_supported",

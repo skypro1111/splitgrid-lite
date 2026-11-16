@@ -8,6 +8,7 @@ mod assets;
 mod browser;
 mod chrome;
 mod grid;
+mod history;
 mod ide;
 mod layout_anim;
 mod model;
@@ -140,6 +141,9 @@ fn main() {
             }
         };
         let shared = windows::Shared { store, connections: std::sync::Arc::new(std::sync::Mutex::new(connections)), agent };
+        // Workspace history: one service for the process, resumed only when
+        // consent was given earlier (app-settings.json historyEnabled).
+        history::init(&shared.store, cx);
         windows::init(shared, requests, cx);
         // Agent notifications: the click handler, and permission when they are on.
         let all = cx.global::<windows::Shared>().store.app_settings();

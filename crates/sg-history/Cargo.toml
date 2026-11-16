@@ -1,0 +1,29 @@
+[package]
+name = "sg-history"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rusqlite = { version = "0.40", features = ["bundled"] }
+# Transcript parsing / redaction. The redaction rules need look-around and
+# back-references (ported 1:1 from transcripts.ts), hence fancy-regex.
+regex = "1"
+fancy-regex = "0.20"
+unicode-normalization = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+# Chunk / group / note hashes (sha1, as the Electron app) and download pins (sha256).
+sha1 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
+# Runtime download + llama-server calls (blocking, rustls; no gzip so the
+# hashed bytes are exactly the served bytes).
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+notify = "8"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
