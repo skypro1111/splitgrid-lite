@@ -39,9 +39,9 @@ impl AppView {
             .h(px(TITLE_H))
             .flex_none()
             .px(px(10.))
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| this.focus_window_chrome(window, cx)))
             .on_mouse_down(MouseButton::Left, |ev, window, _| {
                 if ev.click_count == 2 {
@@ -86,9 +86,9 @@ impl AppView {
             .flex()
             .items_center()
             .gap(px(12.))
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_t_1()
-            .border_color(BORDER)
+            .border_color(border())
             .text_size(px(11.))
             .text_color(TEXT_MUTED)
             .child(
@@ -139,8 +139,8 @@ impl AppView {
                     .items_center()
                     .gap(px(8.))
                     .rounded(px(6.))
-                    .when(active, |d| d.bg(BG_HOVER))
-                    .hover(|d| d.bg(BG_HOVER));
+                    .when(active, |d| d.bg(bg_hover()))
+                    .hover(|d| d.bg(bg_hover()));
                 if renaming {
                     return row.child(self.rename_field(cx)).into_any_element();
                 }
@@ -180,7 +180,7 @@ impl AppView {
                                         .rounded(px(4.))
                                         .text_size(px(11.))
                                         .text_color(TEXT_MUTED)
-                                        .hover(|d| d.bg(BG_SURFACE).text_color(TEXT_PRIMARY))
+                                        .hover(|d| d.bg(bg_surface()).text_color(TEXT_PRIMARY))
                                         .child(if other_window { "Show window" } else { "New window" })
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
@@ -195,7 +195,7 @@ impl AppView {
                                 .rounded(px(4.))
                                 .text_size(px(11.))
                                 .text_color(TEXT_MUTED)
-                                .hover(|d| d.bg(BG_SURFACE).text_color(TEXT_PRIMARY))
+                                .hover(|d| d.bg(bg_surface()).text_color(TEXT_PRIMARY))
                                 .child("Rename")
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     cx.stop_propagation();
@@ -210,7 +210,7 @@ impl AppView {
                                     .rounded(px(4.))
                                     .text_size(px(11.))
                                     .text_color(TEXT_MUTED)
-                                    .hover(|d| d.bg(BG_SURFACE).text_color(ACCENT_RED))
+                                    .hover(|d| d.bg(bg_surface()).text_color(ACCENT_RED))
                                     .child("Delete")
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
@@ -247,8 +247,8 @@ impl AppView {
                     .flex_col()
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(BORDER)
-                    .bg(BG_PRIMARY)
+                    .border_color(border())
+                    .bg(bg_primary())
                     .shadow(vec![BoxShadow {
                         color: c(hexa(0x000000, 0.45)),
                         offset: point(px(0.), px(18.)),
@@ -262,13 +262,13 @@ impl AppView {
                             .px(px(16.))
                             .py(px(12.))
                             .border_b_1()
-                            .border_color(BORDER)
+                            .border_color(border())
                             .text_size(px(13.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(if for_window { "Open in a new window" } else { "Environments" }),
                     )
                     .child(div().id("env-list").p(px(8.)).flex().flex_col().gap(px(2.)).overflow_y_scroll().children(rows))
-                    .child(div().p(px(8.)).flex().gap(px(8.)).border_t_1().border_color(BORDER).map(|d| {
+                    .child(div().p(px(8.)).flex().gap(px(8.)).border_t_1().border_color(border()).map(|d| {
                         let button = |id: &'static str, label: &'static str| {
                             div()
                                 .id(id)
@@ -279,7 +279,7 @@ impl AppView {
                                 .justify_center()
                                 .rounded(px(6.))
                                 .border_1()
-                                .border_color(BORDER)
+                                .border_color(border())
                                 .text_size(px(11.))
                                 .cursor_pointer()
                                 .child(label)
@@ -287,9 +287,9 @@ impl AppView {
                         if for_window {
                             d.child(
                                 button("env-new-window", "New environment in a new window")
-                                    .bg(BG_SURFACE)
+                                    .bg(bg_surface())
                                     .text_color(TEXT_PRIMARY)
-                                    .hover(|d| d.bg(BG_HOVER))
+                                    .hover(|d| d.bg(bg_hover()))
                                     .on_click(cx.listener(|this, _, _, cx| this.open_in_new_window(None, cx))),
                             )
                         } else {
@@ -297,15 +297,15 @@ impl AppView {
                                 button("env-new", "New environment")
                                     .border_dashed()
                                     .text_color(TEXT_MUTED)
-                                    .hover(|d| d.bg(BG_HOVER).border_color(TEXT_MUTED).text_color(TEXT_PRIMARY))
+                                    .hover(|d| d.bg(bg_hover()).border_color(TEXT_MUTED).text_color(TEXT_PRIMARY))
                                     .on_click(cx.listener(|this, _, window, cx| this.new_env(window, cx))),
                             )
                             .child(
                                 // Pick what the new window shows (⌘⇧N).
                                 button("env-pick-window", "New window  ⌘⇧N")
-                                    .bg(BG_SURFACE)
+                                    .bg(bg_surface())
                                     .text_color(TEXT_PRIMARY)
-                                    .hover(|d| d.bg(BG_HOVER))
+                                    .hover(|d| d.bg(bg_hover()))
                                     .on_click(cx.listener(|this, _, _, cx| this.toggle_env_picker(true, cx))),
                             )
                         }
@@ -363,7 +363,7 @@ impl AppView {
             .justify_between()
             .gap(px(8.))
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .text_size(px(11.))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(TEXT_PRIMARY)
@@ -412,9 +412,9 @@ impl AppView {
                     .w(px(POPOVER_W))
                     .flex()
                     .flex_col()
-                    .bg(BG_SURFACE)
+                    .bg(bg_surface())
                     .border_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .rounded(px(8.))
                     .shadow(popover_shadow())
                     .overflow_hidden()
@@ -449,7 +449,7 @@ impl AppView {
                 .text_size(px(12.))
                 .text_color(if danger { ACCENT_RED } else { TEXT_PRIMARY })
                 .cursor_pointer()
-                .hover(|d| d.bg(BG_HOVER))
+                .hover(|d| d.bg(bg_hover()))
                 .child(label)
         };
         let (r_id, f_id, d_id, s_id) = (ws_id.clone(), ws_id.clone(), ws_id.clone(), ws_id.clone());
@@ -460,9 +460,9 @@ impl AppView {
                 .p(px(4.))
                 .flex()
                 .flex_col()
-                .bg(BG_SURFACE)
+                .bg(bg_surface())
                 .border_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .rounded(px(8.))
                 .shadow(popover_shadow())
                 .occlude()
@@ -486,7 +486,7 @@ impl AppView {
                         .child(div().font_weight(FontWeight::SEMIBOLD).text_color(TEXT_PRIMARY).child(ws.name.clone()))
                         .child("?"),
                 )
-                .child(div().my(px(4.)).h(px(1.)).bg(BORDER))
+                .child(div().my(px(4.)).h(px(1.)).bg(border()))
                 .child(item("ws-menu-cancel", "Cancel".into(), false).on_click(cx.listener(|this, _, _, cx| this.close_popover(cx))))
                 .child(item("ws-menu-close", "Close workspace".into(), true).on_click(cx.listener(move |this, _, window, cx| {
                     this.close_popover(cx);
@@ -522,7 +522,7 @@ impl AppView {
                                 })),
                         )
                     })
-                    .child(div().my(px(4.)).h(px(1.)).bg(BORDER))
+                    .child(div().my(px(4.)).h(px(1.)).bg(border()))
                     .child(item("ws-menu-close", "Close workspace…".into(), true).on_click(cx.listener(|this, _, _, cx| {
                         this.ws_menu_confirm = true;
                         cx.notify();
@@ -547,7 +547,7 @@ impl AppView {
                 .text_size(px(12.))
                 .text_color(TEXT_PRIMARY)
                 .cursor_pointer()
-                .hover(|d| d.bg(BG_HOVER))
+                .hover(|d| d.bg(bg_hover()))
                 .child(svg().path(icon(icon_name)).size(px(14.)).flex_none().text_color(TEXT_PRIMARY))
                 .child(label)
         };
@@ -564,7 +564,7 @@ impl AppView {
                             .px(px(14.))
                             .py(px(7.))
                             .cursor_pointer()
-                            .hover(|d| d.bg(BG_HOVER))
+                            .hover(|d| d.bg(bg_hover()))
                             .child(div().text_size(px(12.)).text_color(TEXT_PRIMARY).truncate().child(ws.name.clone()))
                             .when_some(ws.working_directory.clone(), |d, dir| {
                                 d.child(div().text_size(px(10.)).text_color(TEXT_MUTED).truncate().child(dir))
@@ -586,9 +586,9 @@ impl AppView {
                 .max_w(px(340.))
                 .max_h(px(360.))
                 .overflow_y_scroll()
-                .bg(BG_SURFACE)
+                .bg(bg_surface())
                 .border_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .rounded(px(6.))
                 .shadow(popover_shadow())
                 .occlude()
@@ -603,9 +603,9 @@ impl AppView {
                     .min_w(px(120.))
                     .flex()
                     .flex_col()
-                    .bg(BG_SURFACE)
+                    .bg(bg_surface())
                     .border_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .rounded(px(6.))
                     .shadow(popover_shadow())
                     .occlude()
@@ -639,7 +639,7 @@ impl AppView {
                                     .rounded_b(px(5.))
                                     .text_size(px(12.))
                                     .text_color(TEXT_PRIMARY)
-                                    .when(self.recent_flyout, |d| d.bg(BG_HOVER))
+                                    .when(self.recent_flyout, |d| d.bg(bg_hover()))
                                     .child(
                                         div()
                                             .flex()
@@ -670,8 +670,8 @@ impl AppView {
                 let (k1, k2) = (kind.clone(), kind.clone());
                 let (cycle_id, del_id) = (t.id.clone(), t.id.clone());
                 let text = t.text.clone();
-                let (border, fill, glyph, glyph_color) = match status {
-                    TodoStatus::Todo => (c(BORDER), None, "", c(TEXT_MUTED)),
+                let (frame, fill, glyph, glyph_color) = match status {
+                    TodoStatus::Todo => (c(border()), None, "", c(TEXT_MUTED)),
                     TodoStatus::InProgress => (c(ACCENT_AMBER), None, "●", c(ACCENT_AMBER)),
                     TodoStatus::Done => (c(ACCENT_GREEN), Some(c(ACCENT_GREEN)), "✓", c(ON_BADGE)),
                 };
@@ -694,7 +694,7 @@ impl AppView {
                             .justify_center()
                             .rounded(px(4.))
                             .border(px(1.5))
-                            .border_color(border)
+                            .border_color(frame)
                             .when_some(fill, |d, f| d.bg(f))
                             .cursor_pointer()
                             .text_size(px(10.))
@@ -740,7 +740,7 @@ impl AppView {
                                 .gap(px(3.))
                                 .rounded(px(4.))
                                 .border_1()
-                                .border_color(BORDER)
+                                .border_color(border())
                                 .text_size(px(10.))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(TEXT_MUTED)
@@ -800,7 +800,7 @@ impl AppView {
                     .flex()
                     .gap(px(6.))
                     .border_t_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(div().flex_1().child(Input::new(&self.todo_input).small()))
                     .child(
                         div()
@@ -810,8 +810,8 @@ impl AppView {
                             .items_center()
                             .rounded(px(6.))
                             .border_1()
-                            .border_color(BORDER)
-                            .bg(BG_HOVER)
+                            .border_color(border())
+                            .bg(bg_hover())
                             .text_size(px(12.))
                             .cursor_pointer()
                             .child("Add")
@@ -825,7 +825,7 @@ impl AppView {
                         .px(px(12.))
                         .py(px(6.))
                         .border_t_1()
-                        .border_color(BORDER)
+                        .border_color(border())
                         .text_size(px(11.))
                         .text_color(TEXT_MUTED)
                         .cursor_pointer()

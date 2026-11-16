@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build "SplitGrid Lite.app" (release) and, with --install, put it in /Applications.
-# Ad-hoc signed: macOS notifications and a stable identity need a signature.
+# Signed with a stable identity when the keychain has one (see the signing step).
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -46,7 +46,21 @@ cat > "$APP/Contents/Info.plist" <<EOF
 </dict>
 </plist>
 EOF
-codesign --force --deep --sign - "$APP"
+# Sign with a certificate when there is one: macOS ties the privacy grants
+# (Screen Recording, notifications, …) to the signature's designated
+# requirement. Ad-hoc, that is the binary's hash, so every rebuild loses them;
+# with a certificate it is the bundle id plus the certificate, stable across
+# builds. SG_SIGN_IDENTITY picks one (a SHA-1 from `security find-identity -v
+# -p codesigning`, or "-" for ad-hoc); by default the first Apple Development one.
+IDENTITY="${SG_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk '/"Apple Development: / { print $2; exit }')}"
+IDENTITY="${IDENTITY:--}"
+codesign --force --deep --sign "$IDENTITY" "$APP"
+codesign --verify --deep --strict "$APP"
+if [ "$IDENTITY" = "-" ]; then
+  echo "signed ad-hoc (no codesigning certificate found): privacy grants reset on every rebuild"
+else
+  echo "signed with certificate $(printf %.8s "$IDENTITY")…"
+fi
 echo "built $APP"
 
 if [ "${1:-}" = "--install" ]; then

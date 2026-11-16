@@ -5,6 +5,7 @@ mod anim;
 mod app;
 mod app_settings;
 mod assets;
+mod background;
 mod browser;
 mod chrome;
 mod grid;
@@ -33,9 +34,11 @@ use gpui_kit::*;
 use app::AppView;
 use model::store::{Store, app_support_dir};
 
-/// env_logger, minus one known-harmless gpui error: an activation change
-/// arriving for a window that is being opened or has just closed. gpui logs it
-/// with an empty target, so a per-module filter can't catch it.
+/// env_logger, minus known-harmless gpui messages: an activation change
+/// arriving for a window that is being opened or has just closed (logged with
+/// an empty target, so a per-module filter can't catch it), and the fonts that
+/// fail to load while Settings → Appearance probes every installed family once
+/// (`theme::FONT_PROBE`).
 fn init_logging() {
     struct Quiet(env_logger::Logger);
     impl log::Log for Quiet {
@@ -44,6 +47,9 @@ fn init_logging() {
         }
         fn log(&self, r: &log::Record) {
             if r.target().is_empty() && r.args().to_string().starts_with("handling active status change") {
+                return;
+            }
+            if theme::FONT_PROBE.load(std::sync::atomic::Ordering::Relaxed) && r.target().contains("text_system") {
                 return;
             }
             self.0.log(r)
@@ -86,6 +92,10 @@ fn main() {
 
     application().with_assets(assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
+        // Settings → Appearance: the background colour and fonts, before anything draws.
+        let appearance = store.app_settings();
+        theme::set_palette(background::derive(Some(&background::from_settings(&appearance))));
+        theme::set_fonts(app_settings::fonts(&appearance));
         theme::apply_to_components(cx);
         // Whole-window UI zoom (⌘+ / ⌘− / ⌘0 outside the panes), as last saved.
         // SPLITGRID_DEBUG_UI_ZOOM=<factor> overrides it for this run (not saved).

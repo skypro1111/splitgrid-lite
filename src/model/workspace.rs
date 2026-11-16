@@ -309,6 +309,13 @@ impl Workspace {
         }
     }
 
+    /// Back to the default size (Settings → Appearance): the pane keeps no zoom of its own.
+    pub fn clear_zoom(&mut self, container_id: &str) {
+        if let Some(map) = self.extra.get_mut("containerZooms").and_then(Value::as_object_mut) {
+            map.remove(container_id);
+        }
+    }
+
     pub fn container_mut(&mut self, id: &str) -> Option<&mut Container> {
         self.containers.iter_mut().find(|c| c.id == id)
     }

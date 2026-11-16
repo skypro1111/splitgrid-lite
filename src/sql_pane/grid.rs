@@ -87,7 +87,7 @@ struct Measure {
 impl Measure {
     fn new(cx: &App) -> Self {
         let text = cx.text_system().clone();
-        let font = text.resolve_font(&font(UI_FONT));
+        let font = text.resolve_font(&font(crate::theme::ui_font()));
         let advance = |ch: char| text.advance(font, gpui_kit::px(FONT_SIZE), ch).map(|s| f32::from(s.width)).unwrap_or(FONT_SIZE * 0.6);
         let ascii = std::array::from_fn(|i| advance(i as u8 as char));
         Measure { text: text.clone(), font, ascii }
@@ -845,7 +845,7 @@ impl Render for ResultGrid {
                 .h(px(ROW_H))
                 .flex()
                 .items_center()
-                .bg(BG_PRIMARY)
+                .bg(bg_primary())
                 .border_1()
                 .border_color(ACCENT)
                 // A click outside the grid (the console, the tree…) ends the edit too.
@@ -890,7 +890,7 @@ impl Render for ResultGrid {
                 .border_color(BORDER_SUBTLE)
                 .text_color(color)
                 .when(whole, |d| d.bg(GUTTER_SELECTED))
-                .when(in_sel && !whole, |d| d.bg(BG_HOVER))
+                .when(in_sel && !whole, |d| d.bg(bg_hover()))
                 .child((r + 1).to_string())
         });
         let gutter_col = div()
@@ -900,9 +900,9 @@ impl Render for ResultGrid {
             .w(px(gutter))
             .bottom_0()
             .overflow_hidden()
-            .bg(EDITOR_BG)
+            .bg(editor_bg())
             .border_r_1()
-            .border_color(BORDER)
+            .border_color(border())
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_gutter_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_gutter_down))
             .children(numbers);
@@ -949,9 +949,9 @@ impl Render for ResultGrid {
             .right_0()
             .h(px(HEADER_H))
             .overflow_hidden()
-            .bg(BG_INPUT)
+            .bg(bg_input())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .text_color(TEXT_PRIMARY)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_header_down))
             .child(div().absolute().top_0().bottom_0().left(px(row_left)).flex().children(heads))
@@ -962,10 +962,10 @@ impl Render for ResultGrid {
             .left_0()
             .w(px(gutter))
             .h(px(HEADER_H))
-            .bg(BG_INPUT)
+            .bg(bg_input())
             .border_r_1()
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
@@ -1027,8 +1027,8 @@ impl Render for ResultGrid {
             .size_full()
             .relative()
             .overflow_hidden()
-            .bg(EDITOR_BG)
-            .font_family(UI_FONT)
+            .bg(editor_bg())
+            .font_family(crate::theme::ui_font())
             .text_size(px(FONT_SIZE))
             .text_color(TEXT_PRIMARY)
             .capture_key_down(cx.listener(Self::on_edit_key))
@@ -1063,7 +1063,7 @@ impl ResultGrid {
                 .gap(px(16.))
                 .text_size(px(FONT_SIZE))
                 .text_color(if enabled { TEXT_PRIMARY } else { TEXT_MUTED })
-                .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(BG_HOVER)))
+                .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(bg_hover())))
                 .child(div().flex_1().child(label))
                 .child(div().text_color(TEXT_MUTED).child(keys))
         };
@@ -1085,9 +1085,9 @@ impl ResultGrid {
                     .flex()
                     .flex_col()
                     .gap(px(1.))
-                    .bg(BG_SURFACE)
+                    .bg(bg_surface())
                     .border_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .rounded(px(6.))
                     .shadow(vec![BoxShadow { color: c(hexa(0, 0.4)), offset: point(px(0.), px(4.)), blur_radius: px(16.), spread_radius: px(0.), inset: false }])
                     .occlude()

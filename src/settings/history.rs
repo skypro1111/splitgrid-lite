@@ -545,7 +545,7 @@ const STOPPED: &str = "Workspace history stopped unexpectedly.";
 
 /// The panel inside the card (HistorySettings' panelStyle).
 fn panel(mt: f32) -> Div {
-    div().mt(px(mt)).p(px(12.)).rounded(px(10.)).border_1().border_color(BORDER).bg(BG_PRIMARY)
+    div().mt(px(mt)).p(px(12.)).rounded(px(10.)).border_1().border_color(border()).bg(bg_primary())
 }
 
 fn note(text: impl Into<SharedString>) -> Div {
@@ -575,7 +575,7 @@ fn primary_button(id: &'static str, label: impl Into<SharedString>) -> Stateful<
         .bg(ACCENT)
         .text_size(px(12.))
         .font_weight(FontWeight::BOLD)
-        .text_color(BG_PRIMARY)
+        .text_color(bg_primary())
         .cursor_pointer()
         .hover(|d| d.opacity(0.9))
         .child(label.into())
@@ -583,7 +583,7 @@ fn primary_button(id: &'static str, label: impl Into<SharedString>) -> Stateful<
 
 fn bar(fraction: f64, paused: bool) -> Div {
     let f = fraction.clamp(0., 1.) as f32;
-    div().mt(px(8.)).h(px(4.)).rounded(px(2.)).bg(BORDER).overflow_hidden().child(div().h_full().w(relative(f)).bg(if paused { TEXT_MUTED } else { ACCENT }))
+    div().mt(px(8.)).h(px(4.)).rounded(px(2.)).bg(border()).overflow_hidden().child(div().h_full().w(relative(f)).bg(if paused { TEXT_MUTED } else { ACCENT }))
 }
 
 fn buttons() -> Div {

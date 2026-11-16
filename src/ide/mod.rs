@@ -647,7 +647,7 @@ impl Render for IdePane {
             .size_full()
             .key_context("Ide")
             .flex()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .text_color(TEXT_PRIMARY)
             .on_action(cx.listener(|this, _: &SaveFile, _, cx| {
                 if let Some(i) = this.active {
@@ -729,7 +729,7 @@ impl IdePane {
                 .py(px(2.))
                 .rounded(px(4.))
                 .cursor_pointer()
-                .hover(|d| d.bg(BG_HOVER))
+                .hover(|d| d.bg(bg_hover()))
                 .group(group.clone())
                 .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip).build(window, cx))
                 .child(svg().path(icon(name)).size(px(14.)).text_color(TEXT_MUTED).group_hover(group, |s| s.text_color(TEXT_PRIMARY)))
@@ -765,7 +765,7 @@ impl IdePane {
                 .rounded(px(2.))
                 .bg(hex(0x1e1e1e))
                 .border_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                     if ev.keystroke.key == "escape" {
                         this.inline = None;
@@ -801,8 +801,8 @@ impl IdePane {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .when(selected, |d| d.bg(BG_HOVER))
-                    .hover(|d| d.bg(BG_HOVER))
+                    .when(selected, |d| d.bg(bg_hover()))
+                    .hover(|d| d.bg(bg_hover()))
                     .child(
                         div().w(px(18.)).flex_none().flex().justify_center().when(is_dir, |d| {
                             d.child(svg().path(icon(if expanded { "chevron-down" } else { "chevron-right" })).size(px(12.)).text_color(TEXT_MUTED))
@@ -833,7 +833,7 @@ impl IdePane {
             .h_full()
             .flex()
             .flex_col()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .text_size(px(fs))
             .child(recorder)
             .child(header)
@@ -873,10 +873,10 @@ impl IdePane {
                     .items_center()
                     .gap(px(6.))
                     .border_r_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .text_size(px(12.))
                     .cursor_pointer()
-                    .map(|d| if active { d.bg(EDITOR_BG).text_color(TEXT_PRIMARY) } else { d.text_color(TEXT_MUTED).hover(|d| d.bg(BG_HOVER)) })
+                    .map(|d| if active { d.bg(editor_bg()).text_color(TEXT_PRIMARY) } else { d.text_color(TEXT_MUTED).hover(|d| d.bg(bg_hover())) })
                     .child(file_icon(&t.path, 14.))
                     .when(t.dirty, |d| d.child(div().mr(px(2.)).text_color(TEXT_MUTED).child("•")))
                     .child(div().min_w_0().truncate().when(t.preview, |d| d.italic()).child(name))
@@ -892,7 +892,7 @@ impl IdePane {
                             .text_color(TEXT_MUTED)
                             .group(group.clone())
                             .when(!active, |d| d.opacity(0.).hover(|d| d.opacity(1.)))
-                            .hover(|d| d.bg(BG_HOVER))
+                            .hover(|d| d.bg(bg_hover()))
                             .child("×")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
@@ -924,16 +924,16 @@ impl IdePane {
             .flex_none()
             .flex()
             .overflow_x_scroll()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .children(tabs);
 
         let body: AnyElement = match self.active.and_then(|i| self.tabs.get(i)) {
             Some(tab) => Editor::new(&tab.editor)
                 .appearance(false)
                 .bordered(false)
-                .font_family(EDITOR_FONT)
+                .font_family(crate::theme::fonts().editor)
                 .text_size(px(self.font_size))
                 .line_height(px((self.font_size * 1.5).round()))
                 .size_full()
@@ -945,7 +945,7 @@ impl IdePane {
                 .items_center()
                 .justify_center()
                 .gap(px(16.))
-                .bg(EDITOR_BG)
+                .bg(editor_bg())
                 .text_color(TEXT_MUTED)
                 .child(div().text_size(px(48.)).opacity(0.15).child("</>"))
                 .child(div().text_size(px(14.)).opacity(0.4).child("Open a file to start editing"))
@@ -963,7 +963,7 @@ impl IdePane {
             .when_some(self.error.clone(), |d, e| {
                 d.child(div().px(px(10.)).py(px(5.)).bg(hexa(0xf14c4c, 0.12)).text_size(px(11.)).text_color(ACCENT_RED).child(e))
             })
-            .child(div().flex_1().min_h_0().bg(EDITOR_BG).pt(px(8.)).child(body))
+            .child(div().flex_1().min_h_0().bg(editor_bg()).pt(px(8.)).child(body))
             .into_any_element()
     }
 
@@ -980,12 +980,12 @@ impl IdePane {
                 .text_size(px(12.))
                 .text_color(if danger { ACCENT_RED } else { TEXT_PRIMARY })
                 .cursor_pointer()
-                .hover(|d| d.bg(BG_HOVER))
+                .hover(|d| d.bg(bg_hover()))
                 .child(div().w(px(16.)).flex_none())
                 .child(div().flex_1().child(label))
                 .when_some(shortcut, |d, s| d.child(div().ml(px(16.)).text_size(px(11.)).text_color(TEXT_MUTED).child(s)))
         };
-        let sep = || div().mx(px(8.)).my(px(4.)).h(px(1.)).bg(BORDER);
+        let sep = || div().mx(px(8.)).my(px(4.)).h(px(1.)).bg(border());
         let mut items: Vec<AnyElement> = Vec::new();
         match menu {
             Menu::Tree(target) => {
@@ -1056,9 +1056,9 @@ impl IdePane {
                     .py(px(4.))
                     .flex()
                     .flex_col()
-                    .bg(BG_SURFACE)
+                    .bg(bg_surface())
                     .border_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .rounded(px(6.))
                     .shadow(vec![BoxShadow { color: c(hexa(0, 0.4)), offset: point(px(0.), px(8.)), blur_radius: px(24.), spread_radius: px(0.), inset: false }])
                     .occlude()

@@ -106,9 +106,9 @@ impl AppView {
             .h_full()
             .flex()
             .flex_col()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_r_1()
-            .border_color(BORDER)
+            .border_color(border())
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| this.focus_window_chrome(window, cx)))
             .child(self.render_sidebar_header(collapsed, cx))
             .child(self.render_workspace_list(collapsed, cx))
@@ -146,7 +146,7 @@ impl AppView {
             .justify_center()
             .rounded(px(4.))
             .cursor_pointer()
-            .hover(|d| d.bg(BG_HOVER))
+            .hover(|d| d.bg(bg_hover()))
             .group("sb-toggle")
             .child(
                 svg()
@@ -215,11 +215,11 @@ impl AppView {
             .rounded(px(6.))
             .border_1()
             .border_dashed()
-            .border_color(BORDER)
+            .border_color(border())
             .text_size(px(11.))
             .text_color(TEXT_MUTED)
             .cursor_pointer()
-            .hover(|d| d.bg(BG_HOVER).border_color(TEXT_MUTED).text_color(TEXT_PRIMARY))
+            .hover(|d| d.bg(bg_hover()).border_color(TEXT_MUTED).text_color(TEXT_PRIMARY))
             .group("ws-add")
             .child(svg().path(icon("plus-square")).size(px(14.)).text_color(TEXT_MUTED).group_hover("ws-add", |s| s.text_color(TEXT_PRIMARY)))
             .when(!collapsed, |d| d.child("workspace"))
@@ -240,7 +240,7 @@ impl AppView {
             .overflow_y_scroll()
             .map(|d| if collapsed { d.px(px(4.)).pb(px(8.)) } else { d.px(px(8.)).pb(px(8.)) })
             .children(rows)
-            .child(div().mt(px(8.)).pt(px(8.)).border_t_1().border_color(BORDER))
+            .child(div().mt(px(8.)).pt(px(8.)).border_t_1().border_color(border()))
             .child(add)
             .into_any_element()
     }
@@ -263,12 +263,12 @@ impl AppView {
             .border_1()
             .map(|d| {
                 if active {
-                    d.bg(BG_HOVER).border_color(BORDER).text_color(TEXT_PRIMARY)
+                    d.bg(bg_hover()).border_color(border()).text_color(TEXT_PRIMARY)
                 } else if self.attention.unviewed_workspaces.contains(&ws.id) {
                     // A finished agent nobody has looked at yet.
                     d.bg(DONE_UNVIEWED).border_color(hexa(0, 0.)).text_color(hex(0xffffff))
                 } else {
-                    d.border_color(hexa(0, 0.)).text_color(TEXT_MUTED).hover(|d| d.bg(BG_HOVER))
+                    d.border_color(hexa(0, 0.)).text_color(TEXT_MUTED).hover(|d| d.bg(bg_hover()))
                 }
             })
             .child(initial)
@@ -291,9 +291,9 @@ impl AppView {
             .pr(px(10.))
             .rounded(px(6.))
             .cursor_pointer()
-            .when(active, |d| d.bg(BG_HOVER))
+            .when(active, |d| d.bg(bg_hover()))
             .when(!active && self.attention.unviewed_workspaces.contains(&ws.id), |d| d.bg(DONE_UNVIEWED_BG))
-            .when(!active, |d| d.hover(|d| d.bg(BG_HOVER)))
+            .when(!active, |d| d.hover(|d| d.bg(bg_hover())))
             .when(ix > 0, |d| {
                 // The faint separator above every row but the first.
                 d.child(
@@ -409,7 +409,7 @@ impl AppView {
                 .justify_center()
                 .rounded(px(4.))
                 .cursor_pointer()
-                .when(open, |d| d.bg(BG_HOVER))
+                .when(open, |d| d.bg(bg_hover()))
                 .group(SharedString::from(group.clone()))
                 .child(
                     svg()
@@ -464,8 +464,8 @@ impl AppView {
                 .text_size(px(11.))
                 .cursor_pointer()
                 .map(|d| if collapsed { d.w(px(36.)).mx_auto().justify_center() } else { d.w_full().px(px(10.)) })
-                .map(|d| if open { d.bg(BG_HOVER).text_color(TEXT_PRIMARY) } else { d.text_color(TEXT_MUTED) })
-                .hover(|d| d.bg(BG_HOVER).text_color(TEXT_PRIMARY))
+                .map(|d| if open { d.bg(bg_hover()).text_color(TEXT_PRIMARY) } else { d.text_color(TEXT_MUTED) })
+                .hover(|d| d.bg(bg_hover()).text_color(TEXT_PRIMARY))
                 .group(group.clone())
                 .child(
                     svg()
@@ -481,7 +481,7 @@ impl AppView {
             .flex_none()
             .p(px(if collapsed { 4. } else { 8. }))
             .border_t_1()
-            .border_color(BORDER)
+            .border_color(border())
             .flex()
             .flex_col()
             .gap(px(2.))

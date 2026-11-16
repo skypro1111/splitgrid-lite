@@ -29,12 +29,27 @@ pub fn c(v: Rgba) -> Hsla {
 }
 
 // --- global.css :root ---
-pub const BG_PRIMARY: Rgba = hex(0x141414);
-pub const BG_SURFACE: Rgba = hex(0x1a1a1a);
-pub const BG_INPUT: Rgba = hex(0x1e1e1e);
-pub const BG_HOVER: Rgba = hex(0x262626);
+// The surfaces follow the background colour the user picked (Settings →
+// Appearance; background.rs derives them), so they are read at draw time.
+pub fn bg_primary() -> Rgba {
+    palette().primary
+}
+pub fn bg_surface() -> Rgba {
+    palette().surface
+}
+pub fn bg_input() -> Rgba {
+    palette().input
+}
+pub fn bg_hover() -> Rgba {
+    palette().hover
+}
 /// The editor surface (--bg-editor).
-pub const EDITOR_BG: Rgba = hex(0x181818);
+pub fn editor_bg() -> Rgba {
+    palette().editor
+}
+pub fn border() -> Rgba {
+    palette().border
+}
 pub const TEXT_PRIMARY: Rgba = hex(0xd4d4d4);
 pub const TEXT_MUTED: Rgba = hex(0x7a797a);
 pub const ACCENT: Rgba = hex(0x228df2);
@@ -45,7 +60,6 @@ pub const ACCENT_BLUE: Rgba = hex(0x4c9df3);
 pub const ACCENT_PURPLE: Rgba = hex(0x5b51ec);
 /// `var(--accent-amber, #e0a23a)`: the variable is never defined, the fallback renders.
 pub const ACCENT_AMBER: Rgba = hex(0xe0a23a);
-pub const BORDER: Rgba = hex(0x383838);
 pub const BORDER_SUBTLE: Rgba = hexa(0xffffff, 0.06);
 
 /// Text on green/amber badges and the done checkbox.
@@ -65,37 +79,94 @@ pub const DOT_ERROR: Rgba = hex(0xfc6b83);
 /// SF Pro is what `-apple-system` resolves to.
 pub const UI_FONT: &str = ".SystemUIFont";
 
+// ── What the user can change (Settings → Appearance) ─────────────────────────
+
+/// The surfaces derived from the background colour (background.rs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Palette {
+    pub primary: Rgba,
+    pub surface: Rgba,
+    pub input: Rgba,
+    pub hover: Rgba,
+    pub editor: Rgba,
+    pub border: Rgba,
+    /// ANSI black in terminals: a hair above the background.
+    pub terminal_black: Rgba,
+}
+
+/// The fonts, with the sizes new terminals and editors start at.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fonts {
+    pub ui: gpui_kit::SharedString,
+    pub terminal: gpui_kit::SharedString,
+    pub terminal_size: f32,
+    pub editor: gpui_kit::SharedString,
+    pub editor_size: f32,
+}
+
+/// Settings → Appearance is loading every installed family to sort out the
+/// monospaced ones: the logger drops gpui's "failed to load font" meanwhile.
+pub static FONT_PROBE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+static PALETTE: std::sync::RwLock<Option<Palette>> = std::sync::RwLock::new(None);
+static FONTS: std::sync::RwLock<Option<Fonts>> = std::sync::RwLock::new(None);
+
+pub fn palette() -> Palette {
+    PALETTE.read().ok().and_then(|p| *p).unwrap_or_else(|| crate::background::derive(None))
+}
+
+pub fn set_palette(p: Palette) {
+    if let Ok(mut slot) = PALETTE.write() {
+        *slot = Some(p);
+    }
+}
+
+pub fn fonts() -> Fonts {
+    FONTS.read().ok().and_then(|f| f.clone()).unwrap_or_else(crate::app_settings::default_fonts)
+}
+
+pub fn set_fonts(f: Fonts) {
+    if let Ok(mut slot) = FONTS.write() {
+        *slot = Some(f);
+    }
+}
+
+/// The interface font.
+pub fn ui_font() -> gpui_kit::SharedString {
+    fonts().ui
+}
+
 /// Point gpui-component's theme (inputs, textareas, menus) at the same palette.
 pub fn apply_to_components(cx: &mut gpui_kit::App) {
     use gpui_kit::component::{Theme, ThemeMode};
     Theme::change(ThemeMode::Dark, None, cx);
     let t = Theme::global_mut(cx);
-    t.font_family = UI_FONT.into();
+    t.font_family = ui_font();
     t.font_size = gpui_kit::px(12.);
     t.radius = gpui_kit::px(6.);
-    t.background = c(BG_PRIMARY);
+    t.background = c(bg_primary());
     t.foreground = c(TEXT_PRIMARY);
-    t.muted = c(BG_HOVER);
+    t.muted = c(bg_hover());
     t.muted_foreground = c(TEXT_MUTED);
-    t.border = c(BORDER);
-    t.input = c(BORDER);
+    t.border = c(border());
+    t.input = c(border());
     t.ring = c(ACCENT);
     t.primary = c(ACCENT);
     t.caret = c(TEXT_PRIMARY);
     t.selection = c(hexa(0xffffff, 0.15));
-    t.popover = c(BG_SURFACE);
+    t.popover = c(bg_surface());
     t.popover_foreground = c(TEXT_PRIMARY);
-    t.accent = c(BG_HOVER);
+    t.accent = c(bg_hover());
     t.accent_foreground = c(TEXT_PRIMARY);
-    t.secondary = c(BG_HOVER);
-    t.list_hover = c(BG_HOVER);
-    t.mono_font_family = crate::ide::EDITOR_FONT.into();
-    t.highlight_theme = std::sync::Arc::new(editor_theme());
+    t.secondary = c(bg_hover());
+    t.list_hover = c(bg_hover());
+    t.mono_font_family = fonts().editor;
+    t.highlight_theme = std::sync::Arc::new(editor_theme(&palette()));
 }
 
 /// The editor's colours: SplitGrid's Monaco theme (`splitgrid-dark`, on vs-dark,
 /// monacoTheme.ts) for the surfaces, vs-dark's token colours for the syntax.
-fn editor_theme() -> gpui_kit::component::highlighter::HighlightTheme {
+fn editor_theme(p: &Palette) -> gpui_kit::component::highlighter::HighlightTheme {
     const JSON: &str = r##"{
         "name": "SplitGrid Dark",
         "appearance": "dark",
@@ -148,5 +219,8 @@ fn editor_theme() -> gpui_kit::component::highlighter::HighlightTheme {
             }
         }
     }"##;
-    serde_json::from_str(JSON).expect("editor theme")
+    // The surfaces follow the background colour; the syntax colours don't.
+    let css = |c: Rgba| format!("#{:02X}{:02X}{:02X}", (c.r * 255.).round() as u8, (c.g * 255.).round() as u8, (c.b * 255.).round() as u8);
+    let json = JSON.replace("#181818", &css(p.editor)).replace("#262626", &css(p.hover));
+    serde_json::from_str(&json).expect("editor theme")
 }

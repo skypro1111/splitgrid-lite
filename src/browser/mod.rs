@@ -627,7 +627,7 @@ impl Render for BrowserPane {
                 .rounded(px(4.))
                 .text_size(px(14.))
                 .text_color(TEXT_MUTED)
-                .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(BG_HOVER)))
+                .when(enabled, |d| d.cursor_pointer().hover(|d| d.bg(bg_hover())))
                 .when(!enabled, |d| d.opacity(0.3))
                 .child(glyph)
         };
@@ -641,9 +641,9 @@ impl Render for BrowserPane {
             .flex()
             .items_center()
             .gap(px(4.))
-            .bg(BG_SURFACE)
+            .bg(bg_surface())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .child(nav_button("browser-back", "←", can_back).on_click(cx.listener(|this, _, _, cx| this.back(cx))))
             .child(nav_button("browser-forward", "→", can_forward).on_click(cx.listener(|this, _, _, cx| this.forward(cx))))
             .child(
@@ -659,9 +659,9 @@ impl Render for BrowserPane {
                     .flex()
                     .items_center()
                     .rounded(px(6.))
-                    .bg(BG_PRIMARY)
+                    .bg(bg_primary())
                     .border_1()
-                    .border_color(if address_focused { ACCENT } else { BORDER })
+                    .border_color(if address_focused { ACCENT } else { border() })
                     .text_size(px(11.))
                     .key_context("BrowserAddress")
                     .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
@@ -708,7 +708,7 @@ impl Render for BrowserPane {
             .relative()
             .flex_1()
             .min_h_0()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .child(
                 canvas(
                     move |b, _, _| {
@@ -746,7 +746,7 @@ impl Render for BrowserPane {
             .flex_col()
             .track_focus(&self.focus)
             .key_context(CONTEXT)
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .text_color(TEXT_PRIMARY)
             .on_action(cx.listener(|this, _: &FocusAddress, window, cx| this.focus_address(window, cx)))
             .on_action(cx.listener(|this, _: &Reload, _, cx| this.reload_page(false, cx)))

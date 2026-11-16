@@ -32,13 +32,13 @@ fn ghost_button(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> 
         .py(px(8.))
         .rounded(px(9.))
         .border_1()
-        .border_color(BORDER)
-        .bg(BG_PRIMARY)
+        .border_color(border())
+        .bg(bg_primary())
         .text_color(TEXT_PRIMARY)
         .text_size(px(12.))
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
-        .hover(|d| d.bg(BG_HOVER))
+        .hover(|d| d.bg(bg_hover()))
         .child(label)
 }
 
@@ -49,7 +49,7 @@ fn primary_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> S
         .py(px(9.))
         .rounded(px(9.))
         .bg(ACCENT)
-        .text_color(BG_PRIMARY)
+        .text_color(bg_primary())
         .text_size(px(12.))
         .font_weight(FontWeight::BOLD)
         .cursor_pointer()
@@ -79,9 +79,9 @@ fn field(state: &Entity<InputState>, mono: bool, window: &Window, cx: &App) -> D
         .px(px(12.))
         .py(px(5.))
         .rounded(px(9.))
-        .bg(BG_PRIMARY)
+        .bg(bg_primary())
         .border_1()
-        .border_color(if focused { ACCENT } else { BORDER })
+        .border_color(if focused { ACCENT } else { border() })
         .when(focused, |d| {
             d.shadow(vec![BoxShadow {
                 color: c(accent_mix(0.18)),
@@ -319,7 +319,7 @@ impl AppView {
                     if active {
                         d.border_color(ACCENT).bg(accent_mix(0.14)).text_color(ACCENT)
                     } else {
-                        d.border_color(BORDER).bg(BG_PRIMARY).text_color(TEXT_PRIMARY)
+                        d.border_color(border()).bg(bg_primary()).text_color(TEXT_PRIMARY)
                     }
                 })
                 .child(label)
@@ -440,9 +440,9 @@ impl AppView {
             .max_h(relative(0.88))
             .flex()
             .flex_col()
-            .bg(BG_SURFACE)
+            .bg(bg_surface())
             .border_1()
-            .border_color(BORDER)
+            .border_color(border())
             .rounded(px(16.))
             .shadow(vec![BoxShadow {
                 color: c(hexa(0, 0.55)),
@@ -461,7 +461,7 @@ impl AppView {
                     .items_center()
                     .gap(px(14.))
                     .border_b_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(
                         div()
                             .size(px(40.))
@@ -497,7 +497,7 @@ impl AppView {
                     .justify_end()
                     .gap(px(10.))
                     .border_t_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(ghost_button("editor-cancel", "Cancel").on_click(cx.listener(|this, _, _, cx| this.close_editor(cx))))
                     .child(primary_button("editor-save", submit).on_click(cx.listener(|this, _, _, cx| this.save_editor(cx)))),
             );
@@ -543,7 +543,7 @@ impl AppView {
                 .items_center()
                 .gap(px(8.))
                 .border_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .text_size(px(11.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(TEXT_PRIMARY)
@@ -642,11 +642,11 @@ impl AppView {
                 .px(px(11.))
                 .py(px(9.))
                 .rounded(px(9.))
-                .bg(BG_PRIMARY)
+                .bg(bg_primary())
                 .border_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .when(busy && !this_connecting, |d| d.opacity(0.5))
-                .when(!busy, |d| d.cursor_pointer().hover(|d| d.bg(BG_HOVER).border_color(hex(0x2f5a82))))
+                .when(!busy, |d| d.cursor_pointer().hover(|d| d.bg(bg_hover()).border_color(hex(0x2f5a82))))
                 .group(group.clone())
                 .child(div().size(px(7.)).flex_none().rounded_full().bg(ACCENT))
                 .child(
@@ -672,7 +672,7 @@ impl AppView {
                                 .text_color(TEXT_MUTED)
                                 .invisible()
                                 .group_hover(group, |s| s.visible())
-                                .hover(|d| d.bg(ACCENT_RED).text_color(BG_PRIMARY))
+                                .hover(|d| d.bg(ACCENT_RED).text_color(bg_primary()))
                                 .child("×")
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
@@ -823,7 +823,7 @@ impl AppView {
                     .flex()
                     .justify_between()
                     .border_t_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(ghost_button(SharedString::from(format!("ssh-new-{id}")), "+ New connection").on_click(cx.listener(|this, _, window, cx| this.open_editor(None, None, window, cx))))
                     .child(ghost_button(SharedString::from(format!("ssh-cancel-{id}")), "Cancel").on_click(cx.listener(move |this, _, _, cx| this.empty_container(&cid_cancel, cx)))),
             ))
@@ -916,8 +916,8 @@ impl AppView {
                             .py(px(3.))
                             .rounded(px(4.))
                             .border_1()
-                            .border_color(BORDER)
-                            .bg(BG_HOVER)
+                            .border_color(border())
+                            .bg(bg_hover())
                             .text_size(px(11.))
                             .cursor_pointer()
                             .child("Retry")

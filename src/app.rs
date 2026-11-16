@@ -371,12 +371,17 @@ impl AppView {
             last_auto_reconnect: HashMap::new(),
             ssh_last_attempt: HashMap::new(),
             editor: None,
-            // Development aid for screenshots: SPLITGRID_DEBUG_OPEN=settings.
+            // Development aid for screenshots: SPLITGRID_DEBUG_OPEN=settings, general or skills.
             sftp_panes: HashMap::new(),
             ide_panes: HashMap::new(),
             sql_panes: HashMap::new(),
             browser_panes: HashMap::new(),
-            settings_tab: (std::env::var("SPLITGRID_DEBUG_OPEN").as_deref() == Ok("settings")).then_some(crate::settings::SettingsTab::Ssh),
+            settings_tab: match std::env::var("SPLITGRID_DEBUG_OPEN").as_deref() {
+                Ok("settings") => Some(crate::settings::SettingsTab::Ssh),
+                Ok("skills") => Some(crate::settings::SettingsTab::Skills),
+                Ok("general") => Some(crate::settings::SettingsTab::General),
+                _ => None,
+            },
             manager: Default::default(),
             agent: shared.agent.clone(),
             attention: Default::default(),
@@ -394,7 +399,9 @@ impl AppView {
         self.app_settings_seen = seen;
         let all = self.store.app_settings();
         crate::app_settings::apply_focus_hotkey(&all, cx);
+        self.follow_appearance(&all, cx);
         self.sync_settings_controls(&all, window, cx);
+        self.sync_appearance_controls(&all, window, cx);
         cx.notify();
     }
 
@@ -941,7 +948,7 @@ impl AppView {
                 (c.content.kind == ContentType::Ide).then_some(())?;
                 let root = PathBuf::from(c.content.extra_str("rootPath")?);
                 let state = c.content.extra.get("ideState").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
-                let zoom = ws.zoom(&id).unwrap_or(13.);
+                let zoom = ws.zoom(&id).unwrap_or_else(|| crate::theme::fonts().editor_size);
                 Some((id, root, state, zoom))
             })
             .collect();
@@ -1332,12 +1339,12 @@ impl AppView {
         let Some(id) = self.state.active().and_then(|w| w.focused_container_id.clone()) else { return };
         let applied = if let Some(pane) = self.panes.get(&id) {
             let current = pane.view.read(cx).font_size();
-            let next = step.map_or(DEFAULT_FONT_SIZE, |s| current + s);
+            let next = step.map_or(crate::theme::fonts().terminal_size, |s| current + s);
             pane.view.update(cx, |v, cx| v.set_font_size(next, cx));
             pane.view.read(cx).font_size()
         } else if let Some((ide, _)) = self.ide_panes.get(&id) {
             let current = ide.read(cx).font_size();
-            let next = step.map_or(DEFAULT_FONT_SIZE, |s| (current + s).clamp(8., 28.));
+            let next = step.map_or(crate::theme::fonts().editor_size, |s| (current + s).clamp(8., 28.));
             ide.update(cx, |v, cx| v.set_font_size(next, cx));
             next
         } else if let Some(entry) = self.browser_panes.get(&id) {
@@ -1349,7 +1356,8 @@ impl AppView {
             return;
         };
         if let Some(ws) = self.state.active_mut() {
-            ws.set_zoom(&id, applied);
+            // ⌘0 hands the pane back to the default size, which then follows Settings.
+            if step.is_some() { ws.set_zoom(&id, applied) } else { ws.clear_zoom(&id) }
         }
         self.changed(cx);
     }
@@ -1382,6 +1390,15 @@ impl AppView {
                 Some(Bounds::new(tile.origin - grid.origin, tile.size))
             });
             self.focus_anim = self.focus_from.map(|_| (Instant::now(), false));
+            // The lifted pane takes the keyboard (its header button may lift a pane
+            // other than the focused one).
+            if let (Some(id), Some(ws)) = (target.as_deref(), self.state.active_mut())
+                && ws.container(id).is_some()
+                && ws.focused_container_id.as_deref() != Some(id)
+            {
+                ws.focused_container_id = Some(id.to_owned());
+                self.changed(cx);
+            }
             self.focus_mode = target;
         }
         self.focus_pending = true;
@@ -1532,6 +1549,9 @@ fn load_state(store: &Store, env: &str) -> WorkspaceState {
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_panes(window, cx);
+        if self.settings_tab == Some(crate::settings::SettingsTab::General) {
+            self.ensure_appearance_controls(window, cx);
+        }
         if self.focus_pending && self.renaming.is_none() && self.popover.is_none() && self.editor.is_none() && self.settings_tab.is_none() {
             self.focus_pending = false;
             self.focus_active_pane(window, cx);
@@ -1561,9 +1581,9 @@ impl Render for AppView {
             .size_full()
             .flex()
             .flex_col()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .text_color(TEXT_PRIMARY)
-            .font_family(UI_FONT)
+            .font_family(crate::theme::ui_font())
             .text_size(px(13.))
             .when(dragging, |d| d.cursor_grabbing())
             .track_focus(&self.root_focus)

@@ -110,11 +110,11 @@ impl SqlPane {
                 .gap(px(6.))
                 .rounded(px(5.))
                 .border_1()
-                .border_color(BORDER)
-                .bg(BG_SURFACE)
+                .border_color(border())
+                .bg(bg_surface())
                 .text_size(px(11.))
                 .cursor_pointer()
-                .hover(|d| d.bg(BG_HOVER))
+                .hover(|d| d.bg(bg_hover()))
                 .child(content)
                 .child(ui::lucide("chevron-down", 11., TEXT_MUTED))
         };
@@ -143,7 +143,7 @@ impl SqlPane {
                 .items_center()
                 .text_size(px(10.5))
                 .cursor_pointer()
-                .when(on, |d| d.bg(BG_HOVER).text_color(TEXT_PRIMARY))
+                .when(on, |d| d.bg(bg_hover()).text_color(TEXT_PRIMARY))
                 .when(!on, |d| d.text_color(TEXT_MUTED))
                 .on_click(cx.listener(move |this, _, _, cx| this.set_tx_mode(mode, cx)))
                 .child(label)
@@ -157,7 +157,7 @@ impl SqlPane {
             .gap(px(6.))
             .bg(ui::BG_BAR)
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .child(
                 selector(
                     "sql-conn-select",
@@ -184,13 +184,13 @@ impl SqlPane {
                     cx.notify();
                 })))
             })
-            .child(div().w(px(1.)).h(px(16.)).bg(BORDER).mx(px(2.)))
+            .child(div().w(px(1.)).h(px(16.)).bg(border()).mx(px(2.)))
             .child(ui::disabled(ui::tool_text("sql-run", "play", ACCENT_GREEN, "Run"), !ready).on_click(cx.listener(|this, _, window, cx| this.run_statement(&super::RunStatement, window, cx))))
             .child(ui::disabled(ui::tool_text("sql-run-all", "play", ACCENT_GREEN, "Script"), !ready).on_click(cx.listener(|this, _, window, cx| this.run_script(&super::RunScript, window, cx))))
             .child(ui::disabled(ui::tool_text("sql-cancel", "square", ACCENT_RED, "Cancel"), !running).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))))
             .child(ui::disabled(ui::tool_text("sql-explain", "eye", ACCENT_BLUE, "Explain"), !ready).on_click(cx.listener(|this, _, window, cx| this.explain(false, window, cx))))
             .child(ui::disabled(ui::tool_text("sql-analyze", "eye", ACCENT_YELLOW, "Analyze"), !ready).on_click(cx.listener(|this, _, window, cx| this.explain(true, window, cx))))
-            .child(div().w(px(1.)).h(px(16.)).bg(BORDER).mx(px(2.)))
+            .child(div().w(px(1.)).h(px(16.)).bg(border()).mx(px(2.)))
             .child(
                 div()
                     .h(px(22.))
@@ -198,7 +198,7 @@ impl SqlPane {
                     .flex_none()
                     .rounded(px(5.))
                     .border_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .overflow_hidden()
                     .child(seg("sql-tx-auto", "Auto", TxMode::Auto, cx))
                     .child(seg("sql-tx-manual", "Manual", TxMode::Manual, cx)),
@@ -334,10 +334,10 @@ impl SqlPane {
                 .max_w(px(220.))
                 .text_size(px(11.))
                 .border_r_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .cursor_pointer()
-                .when(active, |d| d.bg(BG_PRIMARY).text_color(TEXT_PRIMARY).border_t_2().border_color(ACCENT))
-                .when(!active, |d| d.text_color(TEXT_MUTED).hover(|d| d.bg(BG_HOVER)))
+                .when(active, |d| d.bg(bg_primary()).text_color(TEXT_PRIMARY).border_t_2().border_color(ACCENT))
+                .when(!active, |d| d.text_color(TEXT_MUTED).hover(|d| d.bg(bg_hover())))
                 .child(div().truncate().child(label))
         };
         let errors = self.log.last().is_some_and(|l| l.outcome.is_err());
@@ -382,7 +382,7 @@ impl SqlPane {
                         .px(px(2.))
                         .rounded(px(3.))
                         .text_color(TEXT_MUTED)
-                        .hover(|d| d.bg(BG_HOVER).text_color(TEXT_PRIMARY))
+                        .hover(|d| d.bg(bg_hover()).text_color(TEXT_PRIMARY))
                         .child("×")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
@@ -401,7 +401,7 @@ impl SqlPane {
             .flex()
             .bg(ui::BG_BAR)
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .overflow_x_scroll()
             .child(output)
             .children(tabs)
@@ -478,7 +478,7 @@ impl SqlPane {
         };
         let failed = matches!(tab.status, TabStatus::Failed(_));
         let body: AnyElement = match &tab.body {
-            Body::Text(editor) => Editor::new(editor).appearance(false).bordered(false).font_family(crate::ide::EDITOR_FONT).text_size(px(12.)).size_full().into_any_element(),
+            Body::Text(editor) => Editor::new(editor).appearance(false).bordered(false).font_family(crate::theme::fonts().editor).text_size(px(crate::theme::fonts().editor_size - 1.)).size_full().into_any_element(),
             Body::Plan(plan) => render_plan(plan),
             Body::Grid(g) => {
                 let view_bar = g.view.as_ref().map(|v| self.render_view_bar(id, v, window, cx));
@@ -492,7 +492,7 @@ impl SqlPane {
                         .items_center()
                         .gap(px(2.))
                         .border_b_1()
-                        .border_color(BORDER)
+                        .border_color(border())
                         .child(ui::tool_text(SharedString::from(format!("sqlr-add-{id}")), "plus", ACCENT_GREEN, "Row").on_click(cx.listener(move |this, _, _, cx| {
                             if let Some((_, g)) = this.active_grid() {
                                 g.update(cx, |g, cx| g.add_row(cx));
@@ -538,7 +538,7 @@ impl SqlPane {
                 .px(px(10.))
                 .py(px(4.))
                 .border_t_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .font_family(ui::MONO)
                 .text_size(px(11.))
                 .text_color(ACCENT_YELLOW)
@@ -559,7 +559,7 @@ impl SqlPane {
                     .items_center()
                     .gap(px(8.))
                     .border_t_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .bg(ui::BG_BAR)
                     .text_size(px(10.5))
                     .text_color(if failed { ACCENT_RED } else { TEXT_MUTED })
@@ -571,7 +571,7 @@ impl SqlPane {
                                 .px(px(4.))
                                 .rounded(px(3.))
                                 .cursor_pointer()
-                                .hover(|d| d.bg(BG_HOVER).text_color(TEXT_PRIMARY))
+                                .hover(|d| d.bg(bg_hover()).text_color(TEXT_PRIMARY))
                                 .child("Copy")
                                 .on_click(move |_, _, cx| grid.update(cx, |g, cx| g.copy_selection(cx))),
                         )
@@ -591,7 +591,7 @@ impl SqlPane {
             .items_center()
             .gap(px(8.))
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .child(ui::label("Where"))
             .child(div().flex_1().child(ui::field(f, true, window, cx)))
             .child(ui::label("Order by"))
@@ -610,13 +610,13 @@ impl SqlPane {
             .items_center()
             .gap(px(6.))
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .bg(ui::BG_BAR)
             .child(div().flex_1().text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).child("Value"))
             .when_some(cell.as_ref().filter(|c| c.3.is_null()), |d, _| d.child(muted("NULL")))
             .when(editable, |d| d.child(ui::button("sql-value-apply", "Apply").on_click(cx.listener(|this, _, _, cx| this.apply_value(cx)))));
         let body: AnyElement = match &self.value_editor {
-            Some((_, editor)) => Editor::new(editor).appearance(false).bordered(false).font_family(crate::ide::EDITOR_FONT).text_size(px(12.)).size_full().into_any_element(),
+            Some((_, editor)) => Editor::new(editor).appearance(false).bordered(false).font_family(crate::theme::fonts().editor).text_size(px(crate::theme::fonts().editor_size - 1.)).size_full().into_any_element(),
             None => div().p(px(12.)).child(muted("Select a cell")).into_any_element(),
         };
         div()
@@ -625,7 +625,7 @@ impl SqlPane {
             .flex_none()
             .flex()
             .flex_col()
-            .bg(EDITOR_BG)
+            .bg(editor_bg())
             .child(header)
             .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
@@ -636,7 +636,7 @@ impl SqlPane {
             Some(tab) => self.render_result(tab, window, cx),
             None => self.render_output(),
         };
-        div().size_full().flex().flex_col().child(self.render_tab_bar(cx)).child(div().flex_1().min_h_0().bg(BG_PRIMARY).child(body)).into_any_element()
+        div().size_full().flex().flex_col().child(self.render_tab_bar(cx)).child(div().flex_1().min_h_0().bg(bg_primary()).child(body)).into_any_element()
     }
 
     // ── Modals ──────────────────────────────────────────────────────────────
@@ -728,9 +728,9 @@ impl SqlPane {
                                 .overflow_y_scroll()
                                 .p(px(10.))
                                 .rounded(px(6.))
-                                .bg(EDITOR_BG)
+                                .bg(editor_bg())
                                 .border_1()
-                                .border_color(BORDER)
+                                .border_color(border())
                                 .font_family(ui::MONO)
                                 .text_size(px(11.5))
                                 .children(sql.lines().map(|l| div().child(l.to_owned()))),
@@ -797,7 +797,7 @@ fn render_plan(plan: &Plan) -> AnyElement {
     let max_cost = plan.max_cost().max(1.);
     let total = plan.total_ms();
     let bar = |frac: f64, color: Rgba| {
-        div().w(px(80.)).h(px(6.)).flex_none().rounded(px(3.)).bg(BG_HOVER).child(div().h_full().rounded(px(3.)).bg(color).w(px((frac.clamp(0., 1.) * 80.) as f32)))
+        div().w(px(80.)).h(px(6.)).flex_none().rounded(px(3.)).bg(bg_hover()).child(div().h_full().rounded(px(3.)).bg(color).w(px((frac.clamp(0., 1.) * 80.) as f32)))
     };
     let num = |v: f64| if v >= 100. || v.fract() == 0. { format!("{v:.0}") } else { format!("{v:.2}") };
     let rows = plan.rows().into_iter().enumerate().map(|(i, (depth, n))| {
@@ -855,7 +855,7 @@ fn render_plan(plan: &Plan) -> AnyElement {
                 .items_center()
                 .gap(px(10.))
                 .border_b_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .text_size(px(10.))
                 .font_weight(FontWeight::BOLD)
                 .text_color(TEXT_MUTED)
@@ -878,7 +878,7 @@ fn render_plan(plan: &Plan) -> AnyElement {
                 .text_size(px(10.5))
                 .text_color(TEXT_MUTED)
                 .border_t_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .when_some(plan.planning_ms, |d, t| d.child(format!("Planning {} ms", num(t))))
                 .when_some(plan.execution_ms, |d, t| d.child(format!("Execution {} ms", num(t))))
                 .when(plan.execution_ms.is_none(), |d| d.child("Estimates only — Analyze runs the statement for real times")),
@@ -897,9 +897,9 @@ impl Render for SqlPane {
                 .h(px(self.editor_h))
                 .flex_none()
                 .key_context("SqlEditor")
-                .bg(EDITOR_BG)
+                .bg(editor_bg())
                 .pt(px(4.))
-                .child(Editor::new(&self.editor).appearance(false).bordered(false).font_family(crate::ide::EDITOR_FONT).text_size(px(13.)).line_height(px(19.)).size_full());
+                .child(Editor::new(&self.editor).appearance(false).bordered(false).font_family(crate::theme::fonts().editor).text_size(px(crate::theme::fonts().editor_size)).line_height(px((crate::theme::fonts().editor_size * 1.46).round())).size_full());
             let right = div()
                 .flex_1()
                 .min_w_0()
@@ -946,7 +946,7 @@ impl Render for SqlPane {
             .track_focus(&self.focus)
             .relative()
             .size_full()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .text_color(TEXT_PRIMARY)
             .on_action(cx.listener(Self::run_statement))
             .on_action(cx.listener(Self::run_script))

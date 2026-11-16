@@ -91,7 +91,7 @@ impl SqlPane {
             .flex_none()
             .flex()
             .flex_col()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .child(header)
             .children(filter)
             .child(
@@ -202,7 +202,7 @@ impl SqlPane {
                             .text_size(px(10.5))
                             .text_color(ACCENT)
                             .cursor_pointer()
-                            .hover(|d| d.bg(BG_HOVER))
+                            .hover(|d| d.bg(bg_hover()))
                             .child(label)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
@@ -237,7 +237,7 @@ impl SqlPane {
             .cursor_pointer()
             .when(selected && focused, |d| d.bg(hexa(0x228df2, 0.30)))
             .when(selected && !focused, |d| d.bg(hexa(0xffffff, 0.08)))
-            .when(!selected, |d| d.hover(|d| d.bg(BG_HOVER)))
+            .when(!selected, |d| d.hover(|d| d.bg(bg_hover())))
             .child(
                 div()
                     .id(SharedString::from(format!("{id}-chev")))

@@ -137,6 +137,9 @@ pub struct Wanted {
     pub sql: bool,
     pub sftp: bool,
     pub history: bool,
+    /// Skills the user switched off in Settings → Skills (bit i = `SKILLS[i]`):
+    /// not installed even while their feature is on.
+    pub skills_off: u8,
 }
 
 impl Wanted {
@@ -150,13 +153,36 @@ impl Wanted {
             sql: integrations && on("agentSqlControl"),
             sftp: integrations && on("agentSftpControl"),
             history: integrations && on("historyEnabled"),
+            skills_off: skills_off(s),
         }
+    }
+
+    /// Whether `skill` goes into ~/.claude/skills: its feature is on and the user didn't switch it off.
+    pub fn installs(&self, skill: &Skill) -> bool {
+        let off = SKILLS.iter().position(|s| s.name == skill.name).is_some_and(|i| self.skills_off & (1 << i) != 0);
+        self.integrations && (skill.wanted)(self) && !off
     }
 }
 
+/// Settings key: the names of the skills switched off in Settings → Skills.
+pub const SKILLS_OFF_KEY: &str = "agentSkillsDisabled";
+
+fn skills_off(s: &Map<String, Value>) -> u8 {
+    let names: Vec<&str> = s.get(SKILLS_OFF_KEY).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+    SKILLS.iter().enumerate().filter(|(_, sk)| names.contains(&sk.name)).fold(0, |m, (i, _)| m | (1 << i))
+}
+
 /// The settings keys whose change re-runs the installer (ipc-handlers' app-settings:save).
-pub const SWITCH_KEYS: [&str; 7] =
-    ["agentIntegrations", "agentTerminalControl", "agentLongRunningInPanes", "agentSqlControl", "agentSqlWrite", "agentSftpControl", "agentSftpWrite"];
+pub const SWITCH_KEYS: [&str; 8] = [
+    "agentIntegrations",
+    "agentTerminalControl",
+    "agentLongRunningInPanes",
+    "agentSqlControl",
+    "agentSqlWrite",
+    "agentSftpControl",
+    "agentSftpWrite",
+    SKILLS_OFF_KEY,
+];
 
 pub struct Installer {
     pub env: Env,
@@ -279,7 +305,7 @@ impl Installer {
         }
         let mut record = self.record();
         for skill in &SKILLS {
-            if (skill.wanted)(&wanted) {
+            if wanted.installs(skill) {
                 match self.install_skill(&claude, skill, wanted, &mut record) {
                     Ok(SkillOutcome::Written) => log::info!("agent skills: installed {}", skill.name),
                     Ok(SkillOutcome::Foreign) => log::info!("agent skills: {} keeps the copy SplitGrid installed", skill.name),
@@ -320,6 +346,26 @@ impl Installer {
         fs::read(self.data_dir.join(RECORD_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
+    /// What ~/.claude/skills holds of each bundled skill (Settings → Skills).
+    /// None when Claude Code isn't on this machine.
+    pub fn skill_states(&self) -> Option<Vec<SkillState>> {
+        let claude = self.env.claude_dir();
+        if !claude.exists() {
+            return None;
+        }
+        let record = self.record();
+        Some(
+            SKILLS
+                .iter()
+                .map(|skill| match fs::read_to_string(claude.join("skills").join(skill.name).join("SKILL.md")) {
+                    Err(_) => SkillState::Absent,
+                    Ok(text) if record.get(skill.name) == Some(&hash(&text)) => SkillState::Ours,
+                    Ok(_) => SkillState::Foreign,
+                })
+                .collect(),
+        )
+    }
+
     fn save_record(&self, record: &BTreeMap<String, String>) {
         let path = self.data_dir.join(RECORD_FILE);
         if (record.is_empty() && !path.exists()) || self.record() == *record {
@@ -346,20 +392,33 @@ pub enum SkillOutcome {
     Foreign,
 }
 
+/// A bundled skill as ~/.claude/skills holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkillState {
+    Absent,
+    /// The copy this app wrote.
+    Ours,
+    /// Another copy: the Electron app's, or one the user edited.
+    Foreign,
+}
+
 pub struct Skill {
     pub name: &'static str,
     wanted: fn(&Wanted) -> bool,
+    /// The switches its feature needs (Settings → Skills turns them on). Workspace
+    /// history isn't among them: it starts with a consent and a download.
+    pub needs: &'static [&'static str],
 }
 
 /// agent-skills/installer.ts: browser rides the master switch; the agent-pane
 /// skill rides terminal control (prompting a pane is prompting an agent).
 pub const SKILLS: [Skill; 6] = [
-    Skill { name: "sg-browser", wanted: |_| true },
-    Skill { name: "sg-terminal", wanted: |w| w.terminal },
-    Skill { name: "sg-agent", wanted: |w| w.terminal },
-    Skill { name: "sg-sql", wanted: |w| w.sql },
-    Skill { name: "sg-sftp", wanted: |w| w.sftp },
-    Skill { name: "sg-history", wanted: |w| w.history },
+    Skill { name: "sg-browser", wanted: |_| true, needs: &["agentIntegrations"] },
+    Skill { name: "sg-terminal", wanted: |w| w.terminal, needs: &["agentIntegrations", "agentTerminalControl"] },
+    Skill { name: "sg-agent", wanted: |w| w.terminal, needs: &["agentIntegrations", "agentTerminalControl"] },
+    Skill { name: "sg-sql", wanted: |w| w.sql, needs: &["agentIntegrations", "agentSqlControl"] },
+    Skill { name: "sg-sftp", wanted: |w| w.sftp, needs: &["agentIntegrations", "agentSftpControl"] },
+    Skill { name: "sg-history", wanted: |w| w.history, needs: &["agentIntegrations"] },
 ];
 
 fn hash(text: &str) -> String {
@@ -625,6 +684,55 @@ mod tests {
         let c = read(&f.codex.join("hooks.json"));
         assert_eq!(c["hooks"]["PermissionRequest"][0]["matcher"], "*");
         assert_eq!(c["hooks"].as_object().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_skill_switched_off_stays_out_and_comes_back() {
+        let f = fixture();
+        let skill = |n: &str| f.claude.join("skills").join(n).join("SKILL.md");
+        settings(&f, json!({"agentIntegrations": true, "agentSqlControl": true}));
+        f.inst.apply();
+        assert!(skill("sg-browser").is_file() && skill("sg-sql").is_file());
+        let states = f.inst.skill_states().unwrap();
+        assert_eq!(states[0], SkillState::Ours, "sg-browser");
+        assert_eq!(states[3], SkillState::Ours, "sg-sql");
+        assert_eq!(states[1], SkillState::Absent, "sg-terminal: its feature is off");
+
+        // Off in Settings → Skills: removed though SQL control stays on.
+        settings(&f, json!({"agentIntegrations": true, "agentSqlControl": true, "agentSkillsDisabled": ["sg-sql", "not-a-skill"]}));
+        let w = Wanted::from_settings(&f.inst.settings());
+        assert!(w.sql && !w.installs(&SKILLS[3]) && w.installs(&SKILLS[0]));
+        f.inst.apply();
+        assert!(!skill("sg-sql").exists());
+        assert!(skill("sg-browser").is_file());
+
+        // Back on.
+        settings(&f, json!({"agentIntegrations": true, "agentSqlControl": true, "agentSkillsDisabled": []}));
+        f.inst.apply();
+        assert!(skill("sg-sql").is_file());
+
+        // Someone else's copy reads as foreign and is left alone.
+        fs::write(skill("sg-browser"), "edited by hand\n").unwrap();
+        assert_eq!(f.inst.skill_states().unwrap()[0], SkillState::Foreign);
+        f.inst.apply();
+        assert_eq!(fs::read_to_string(skill("sg-browser")).unwrap(), "edited by hand\n");
+    }
+
+    #[test]
+    fn no_claude_dir_means_no_skill_states() {
+        let f = fixture();
+        fs::remove_dir_all(&f.claude).unwrap();
+        assert!(f.inst.skill_states().is_none());
+    }
+
+    #[test]
+    fn every_skill_names_the_switches_it_needs() {
+        for s in &SKILLS {
+            assert_eq!(s.needs.first(), Some(&"agentIntegrations"), "{}", s.name);
+            let all: Map<String, Value> = s.needs.iter().map(|k| (k.to_string(), Value::Bool(true))).collect();
+            // History needs its own consent on top; every other skill installs from its switches alone.
+            assert_eq!(Wanted::from_settings(&all).installs(s), s.name != "sg-history", "{}", s.name);
+        }
     }
 
     #[test]

@@ -17,6 +17,54 @@ pub fn mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
+// ── Appearance: background colour and fonts (Settings → Appearance) ─────────
+//
+// `backgroundColor` is the Electron app's key (both apps follow it). The font
+// keys are Lite's own: the Electron app has no font settings and keeps them as
+// unknown keys.
+
+pub const DEFAULT_TERMINAL_FONT: &str = "Menlo";
+pub const DEFAULT_TERMINAL_SIZE: f32 = 13.;
+pub const DEFAULT_EDITOR_SIZE: f32 = 13.;
+pub const FONT_SIZES: std::ops::RangeInclusive<u32> = 9..=24;
+
+pub fn default_fonts() -> crate::theme::Fonts {
+    crate::theme::Fonts {
+        ui: crate::theme::UI_FONT.into(),
+        terminal: DEFAULT_TERMINAL_FONT.into(),
+        terminal_size: DEFAULT_TERMINAL_SIZE,
+        editor: crate::ide::EDITOR_FONT.into(),
+        editor_size: DEFAULT_EDITOR_SIZE,
+    }
+}
+
+pub fn fonts(s: &Settings) -> crate::theme::Fonts {
+    let d = default_fonts();
+    let family = |k: &str, d: gpui_kit::SharedString| s.get(k).and_then(Value::as_str).map(str::trim).filter(|f| !f.is_empty()).map(|f| f.to_owned().into()).unwrap_or(d);
+    let size = |k: &str, d: f32| {
+        s.get(k).and_then(Value::as_f64).map(|v| v as f32).filter(|v| (*FONT_SIZES.start() as f32..=*FONT_SIZES.end() as f32).contains(v)).unwrap_or(d)
+    };
+    crate::theme::Fonts {
+        ui: family("uiFontFamily", d.ui),
+        terminal: family("terminalFontFamily", d.terminal),
+        terminal_size: size("terminalFontSize", d.terminal_size),
+        editor: family("editorFontFamily", d.editor),
+        editor_size: size("editorFontSize", d.editor_size),
+    }
+}
+
+/// Take the colour and fonts the settings name: the palette and fonts every
+/// view reads, gpui-component's theme, then a redraw. Returns the fonts before.
+pub fn apply_appearance(s: &Settings, cx: &mut App) -> crate::theme::Fonts {
+    let before = crate::theme::fonts();
+    crate::theme::set_palette(crate::background::derive(Some(&crate::background::from_settings(s))));
+    crate::theme::set_fonts(fonts(s));
+    crate::theme::apply_to_components(cx);
+    // apply_to_components resets the sizes; the window zoom scales them again.
+    crate::ui::apply(crate::ui::level(), cx);
+    before
+}
+
 // ── Notification sound (renderer/sounds, useNotificationSound) ───────────────
 
 /// (id, label), in the order the picker shows them.

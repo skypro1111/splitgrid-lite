@@ -32,12 +32,12 @@ pub fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> State
         .gap(px(5.))
         .rounded(px(5.))
         .border_1()
-        .border_color(BORDER)
-        .bg(BG_SURFACE)
+        .border_color(border())
+        .bg(bg_surface())
         .text_size(px(11.))
         .text_color(TEXT_PRIMARY)
         .cursor_pointer()
-        .hover(|d| d.bg(BG_HOVER))
+        .hover(|d| d.bg(bg_hover()))
         .child(label.into())
 }
 
@@ -60,7 +60,7 @@ pub fn tool(id: impl Into<ElementId>, icon: &str, color: Rgba) -> Stateful<Div> 
         .justify_center()
         .rounded(px(5.))
         .cursor_pointer()
-        .hover(|d| d.bg(BG_HOVER))
+        .hover(|d| d.bg(bg_hover()))
         .child(lucide(icon, 14., color))
 }
 
@@ -78,7 +78,7 @@ pub fn tool_text(id: impl Into<ElementId>, icon: &str, color: Rgba, label: impl 
         .cursor_pointer()
         .text_size(px(11.))
         .text_color(TEXT_PRIMARY)
-        .hover(|d| d.bg(BG_HOVER))
+        .hover(|d| d.bg(bg_hover()))
         .child(lucide(icon, 13., color))
         .child(label.into())
 }
@@ -91,9 +91,9 @@ pub fn field(state: &Entity<InputState>, mono: bool, window: &Window, cx: &App) 
         .px(px(8.))
         .py(px(3.))
         .rounded(px(5.))
-        .bg(BG_INPUT)
+        .bg(bg_input())
         .border_1()
-        .border_color(if focused { ACCENT } else { BORDER })
+        .border_color(if focused { ACCENT } else { border() })
         .text_size(px(12.))
         .when(mono, |d| d.font_family(MONO))
         .child(Input::new(state).appearance(false).small())
@@ -118,9 +118,9 @@ pub fn modal(id: &'static str, width: f32, body: impl IntoElement) -> Div {
             .flex_col()
             .gap(px(10.))
             .rounded(px(10.))
-            .bg(BG_SURFACE)
+            .bg(bg_surface())
             .border_1()
-            .border_color(BORDER)
+            .border_color(border())
             .shadow(vec![BoxShadow { color: c(hexa(0, 0.5)), offset: point(px(0.), px(12.)), blur_radius: px(32.), spread_radius: px(0.), inset: false }])
             .text_color(TEXT_PRIMARY)
             .child(body),
@@ -143,9 +143,9 @@ pub fn popup(id: &'static str, at: Point<Pixels>, items: Vec<AnyElement>, on_clo
                 .py(px(4.))
                 .flex()
                 .flex_col()
-                .bg(BG_SURFACE)
+                .bg(bg_surface())
                 .border_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .rounded(px(6.))
                 .shadow(vec![BoxShadow { color: c(hexa(0, 0.4)), offset: point(px(0.), px(8.)), blur_radius: px(24.), spread_radius: px(0.), inset: false }])
                 .occlude()
@@ -167,12 +167,12 @@ pub fn menu_item(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Sta
         .text_size(px(12.))
         .text_color(TEXT_PRIMARY)
         .cursor_pointer()
-        .hover(|d| d.bg(BG_HOVER))
+        .hover(|d| d.bg(bg_hover()))
         .child(text.into())
 }
 
 pub fn menu_sep() -> Div {
-    div().my(px(4.)).h(px(1.)).bg(BORDER)
+    div().my(px(4.)).h(px(1.)).bg(border())
 }
 
 /// Dialect badge and colour (ConnectionDialog's DIALECT_BADGE / brand colours).

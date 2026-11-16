@@ -1,5 +1,5 @@
-//! Settings (SettingsModal in the Electron app): General, and the SSH
-//! connection manager (SSHConnectionManager) — groups, test, edit, duplicate, delete.
+//! Settings (SettingsModal in the Electron app): General, Skills (Lite's own,
+//! settings/skills.rs), and the SSH connection manager (SSHConnectionManager) — groups, test, edit, duplicate, delete.
 //!
 //! General holds every Electron setting this app acts on, stored in the shared
 //! `app-settings.json` as patches (keys this app doesn't know are kept). Left
@@ -8,7 +8,9 @@
 //! Code pane, and the Fast chat and Account tabs. Workspace history acts
 //! through its service rather than as a plain switch (settings/history.rs).
 
+mod appearance;
 mod history;
+mod skills;
 
 use std::collections::{HashMap, HashSet};
 
@@ -30,6 +32,7 @@ use crate::theme::*;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
     General,
+    Skills,
     Ssh,
 }
 
@@ -62,6 +65,8 @@ pub struct ManagerState {
     _recorder: Option<Subscription>,
     /// Settings → Workspace history's own state.
     pub(crate) history: history::HistoryUi,
+    /// Settings → Appearance's colour field and font selects.
+    pub(crate) appearance: appearance::AppearanceUi,
 }
 
 // ── General ──────────────────────────────────────────────────────────────────
@@ -73,8 +78,8 @@ fn card(title: &'static str, desc: Option<&'static str>) -> Div {
         .p(px(18.))
         .rounded(px(12.))
         .border_1()
-        .border_color(BORDER)
-        .bg(BG_SURFACE)
+        .border_color(border())
+        .bg(bg_surface())
         .child(div().text_size(px(13.)).font_weight(FontWeight::BOLD).text_color(TEXT_PRIMARY).child(title))
         .when_some(desc, |d, desc| d.child(div().mt(px(5.)).text_size(px(12.)).line_height(px(18.)).text_color(TEXT_MUTED).child(desc)))
 }
@@ -97,7 +102,7 @@ fn toggle(
         .mt(px(1.))
         .flex_none()
         .rounded(px(12.))
-        .bg(if checked { ACCENT } else { BORDER })
+        .bg(if checked { ACCENT } else { border() })
         .when(!disabled, |d| d.cursor_pointer())
         .child(
             div()
@@ -139,9 +144,19 @@ fn set_values(this: &mut AppView, patch: &[(&str, serde_json::Value)], cx: &mut 
     }
     let changed = |k: &str| patch.iter().any(|(p, _)| *p == k);
     // Agent integrations install or remove the hooks and skills.
+    // Off the main thread; then redraw, so Settings → Skills shows what is installed now.
     if crate::agent::install::SWITCH_KEYS.iter().any(|k| changed(k)) {
         let installer = crate::agent::install::Installer::new(this.store.dir());
-        std::thread::spawn(move || installer.apply());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().spawn(async move { installer.apply() }).await;
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+    }
+    // A new background or font: every view reads it at once.
+    if appearance::KEYS.iter().any(|k| changed(k)) {
+        let all = this.store.app_settings();
+        this.follow_appearance(&all, cx);
     }
     if let Some((_, v)) = patch.iter().find(|(k, _)| *k == "terminalMouseScroll") {
         let home = std::env::home_dir().unwrap_or_default();
@@ -179,9 +194,9 @@ fn control(id: &'static str, active: bool) -> Stateful<Div> {
         .px(px(11.))
         .py(px(8.))
         .rounded(px(9.))
-        .bg(BG_PRIMARY)
+        .bg(bg_primary())
         .border_1()
-        .border_color(if active { ACCENT } else { BORDER })
+        .border_color(if active { ACCENT } else { border() })
         .when(active, |d| d.shadow(vec![BoxShadow { color: c(hexa(0x228df2, 0.16)), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: px(3.), inset: false }]))
         .text_size(px(12.))
         .cursor_pointer()
@@ -194,19 +209,19 @@ fn ghost_button(id: &'static str, label: &'static str) -> Stateful<Div> {
         .py(px(8.))
         .rounded(px(9.))
         .border_1()
-        .border_color(BORDER)
-        .bg(BG_PRIMARY)
+        .border_color(border())
+        .bg(bg_primary())
         .text_size(px(12.))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(TEXT_PRIMARY)
         .cursor_pointer()
-        .hover(|d| d.bg(BG_HOVER))
+        .hover(|d| d.bg(bg_hover()))
         .child(label)
 }
 
 impl AppView {
     /// The General tab: the settings this app acts on, stored with the Electron app's.
-    fn render_general(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_general(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let all = self.store.app_settings();
         let on = |k: &str| all.get(k).and_then(serde_json::Value::as_bool).unwrap_or(false);
         let mute = on("muteAll");
@@ -395,8 +410,9 @@ impl AppView {
             .id("settings-general")
             .size_full()
             .overflow_y_scroll()
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .p(px(20.))
+            .child(self.render_appearance(window, cx))
             .child(notifications)
             .child(terminal_card)
             .child(shortcuts)
@@ -417,9 +433,9 @@ impl AppView {
             .py(px(4.))
             .flex()
             .flex_col()
-            .bg(BG_SURFACE)
+            .bg(bg_surface())
             .border_1()
-            .border_color(BORDER)
+            .border_color(border())
             .rounded(px(9.))
             .shadow(vec![BoxShadow { color: c(hexa(0, 0.45)), offset: point(px(0.), px(8.)), blur_radius: px(24.), spread_radius: px(0.), inset: false }])
             .occlude()
@@ -437,7 +453,7 @@ impl AppView {
                     .rounded(px(6.))
                     .text_size(px(12.))
                     .cursor_pointer()
-                    .map(|d| if selected { d.bg(hexa(0x228df2, 0.14)).text_color(ACCENT) } else { d.text_color(TEXT_PRIMARY).hover(|d| d.bg(BG_HOVER)) })
+                    .map(|d| if selected { d.bg(hexa(0x228df2, 0.14)).text_color(ACCENT) } else { d.text_color(TEXT_PRIMARY).hover(|d| d.bg(bg_hover())) })
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -550,7 +566,7 @@ fn small_button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Sta
         .px(px(7.))
         .py(px(2.))
         .rounded(px(4.))
-        .bg(BG_HOVER)
+        .bg(bg_hover())
         .text_size(px(11.))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
@@ -568,7 +584,7 @@ fn header_button(id: &'static str, label: &'static str, primary: bool) -> Statef
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
         .hover(|d| d.opacity(0.85))
-        .map(|d| if primary { d.bg(ACCENT).text_color(BG_PRIMARY) } else { d.bg(BG_HOVER).text_color(TEXT_PRIMARY) })
+        .map(|d| if primary { d.bg(ACCENT).text_color(bg_primary()) } else { d.bg(bg_hover()).text_color(TEXT_PRIMARY) })
         .child(label)
 }
 
@@ -736,7 +752,8 @@ impl AppView {
         };
 
         let body = match tab {
-            SettingsTab::General => self.render_general(cx),
+            SettingsTab::General => self.render_general(window, cx),
+            SettingsTab::Skills => self.render_skills(cx),
             SettingsTab::Ssh => self.render_manager(window, cx),
         };
 
@@ -749,9 +766,9 @@ impl AppView {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .bg(BG_SURFACE)
+            .bg(bg_surface())
             .border_1()
-            .border_color(BORDER)
+            .border_color(border())
             .rounded(px(16.))
             .shadow(vec![BoxShadow {
                 color: c(hexa(0, 0.55)),
@@ -769,7 +786,7 @@ impl AppView {
                     .px(px(20.))
                     .py(px(16.))
                     .border_b_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(
                         div()
                             .size(px(34.))
@@ -788,6 +805,7 @@ impl AppView {
                             .flex()
                             .gap(px(4.))
                             .child(tab_button(SettingsTab::General, "tab-general", "General", cx))
+                            .child(tab_button(SettingsTab::Skills, "tab-skills", "Skills", cx))
                             .child(tab_button(SettingsTab::Ssh, "tab-ssh", "SSH Connections", cx)),
                     )
                     .child(div().flex_1())
@@ -802,12 +820,12 @@ impl AppView {
                             .text_size(px(16.))
                             .text_color(TEXT_MUTED)
                             .cursor_pointer()
-                            .hover(|d| d.bg(BG_HOVER).text_color(TEXT_PRIMARY))
+                            .hover(|d| d.bg(bg_hover()).text_color(TEXT_PRIMARY))
                             .child("✕")
                             .on_click(cx.listener(|this, _, _, cx| this.close_settings(cx))),
                     ),
             )
-            .child(div().flex_1().min_h_0().flex().flex_col().bg(if tab == SettingsTab::Ssh { BG_SURFACE } else { BG_PRIMARY }).child(body));
+            .child(div().flex_1().min_h_0().flex().flex_col().bg(if tab == SettingsTab::Ssh { bg_surface() } else { bg_primary() }).child(body));
 
         Some(
             div()
@@ -910,7 +928,7 @@ impl AppView {
                     .items_center()
                     .gap(px(8.))
                     .border_b_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(div().flex_1().text_size(px(15.)).font_weight(FontWeight::BOLD).child("SSH Connections"))
                     .child(header_button("mgr-group", "+ Group", false).on_click(cx.listener(|this, _, window, cx| this.start_group_edit(GroupEdit::New, window, cx))))
                     .child(header_button("mgr-add", "+ Add", true).on_click(cx.listener(|this, _, window, cx| this.open_editor(None, None, window, cx)))),
@@ -945,7 +963,7 @@ impl AppView {
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(TEXT_MUTED)
             .cursor_pointer()
-            .hover(|d| d.bg(BG_HOVER))
+            .hover(|d| d.bg(bg_hover()))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_manager_group(&k_toggle, cx)))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if !*hovered && this.manager.confirm_ungroup.is_some() {
@@ -977,7 +995,7 @@ impl AppView {
                                 d.child(
                                     small_button(SharedString::from(format!("grp-yes-{key}")), "Ungroup all")
                                         .bg(ACCENT_RED)
-                                        .text_color(BG_PRIMARY)
+                                        .text_color(bg_primary())
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.ungroup_all(&k_yes, cx);
@@ -1007,7 +1025,7 @@ impl AppView {
         let dot = match &tested {
             Some(Ok(())) => ACCENT_GREEN,
             Some(Err(_)) => ACCENT_RED,
-            None => BORDER,
+            None => border(),
         };
         let auth = if c.auth_method == AuthMethod::PrivateKey { "key" } else { "password" };
         let (t_id, e_id, d_id, x_id, y_id) = (id.clone(), id.clone(), id.clone(), id.clone(), id.clone());
@@ -1021,7 +1039,7 @@ impl AppView {
             .flex()
             .items_center()
             .gap(px(10.))
-            .hover(|d| d.bg(BG_HOVER))
+            .hover(|d| d.bg(bg_hover()))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if !*hovered && this.manager.confirm_delete.as_deref() == Some(x_id.as_str()) {
                     this.manager.confirm_delete = None;
@@ -1066,7 +1084,7 @@ impl AppView {
                             d.child(
                                 small_button(SharedString::from(format!("m-yes-{id}")), "Confirm")
                                     .bg(ACCENT_RED)
-                                    .text_color(BG_PRIMARY)
+                                    .text_color(bg_primary())
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.manager.confirm_delete = None;
                                         this.delete_connection(&y_id, cx);
@@ -1091,7 +1109,7 @@ fn group_field(input: &Entity<InputState>) -> Div {
         .px(px(10.))
         .py(px(2.))
         .rounded(px(6.))
-        .bg(BG_PRIMARY)
+        .bg(bg_primary())
         .border_1()
         .border_color(ACCENT)
         .text_size(px(12.))

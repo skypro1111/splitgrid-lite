@@ -28,8 +28,11 @@ use super::keys::{self, Mods};
 use super::mouse::{self, Action, Button, CellPos, MouseMods};
 use super::{GridSize, RemoteStatus, TermEvent, Terminal};
 
-const FONT_FAMILY: &str = "Menlo";
-/// SplitGrid's default terminal size; each pane can zoom (8–28).
+/// The terminal font, as Settings → Appearance names it (Menlo by default).
+fn font_family() -> SharedString {
+    crate::theme::fonts().terminal
+}
+/// SplitGrid's default terminal size before Settings → Appearance changes it; each pane can zoom (8–28).
 pub const DEFAULT_FONT_SIZE: f32 = 13.;
 pub const MIN_FONT_SIZE: f32 = 8.;
 pub const MAX_FONT_SIZE: f32 = 28.;
@@ -159,7 +162,7 @@ impl TerminalView {
             exited: false,
             scroll_rem: 0.,
             hud: std::env::var_os("SPLITGRID_HUD").is_some(),
-            font_size: DEFAULT_FONT_SIZE,
+            font_size: crate::theme::fonts().terminal_size,
             layout: Rc::new(Cell::new(None)),
             remote: terminal_is_remote.then_some(RemoteStatus::Connecting),
             offer: None,
@@ -584,7 +587,7 @@ impl TerminalView {
 
 fn metrics(cx: &App, font_size: f32) -> Metrics {
     let text = cx.text_system();
-    let font_id = text.resolve_font(&font(FONT_FAMILY));
+    let font_id = text.resolve_font(&font(font_family()));
     let size = px(font_size);
     let cell_width = text.advance(font_id, size, 'm').map(|s| s.width).unwrap_or(px(font_size * 0.6));
     let natural = text.ascent(font_id, size) + text.descent(font_id, size).abs();
@@ -617,7 +620,7 @@ fn build_frame(view: &TerminalView, metrics: Metrics, focused: bool) -> Frame {
     let selection_bg = Hsla::from(Rgba { r: 0xe4 as f32 / 255., g: 0xe4 as f32 / 255., b: 0xe4 as f32 / 255., a: 0x1e as f32 / 255. });
     let block_at = cursor.and_then(|(r, c, shape, _)| (shape == CursorShape::Block).then_some((r, c)));
 
-    let base = font(FONT_FAMILY);
+    let base = font(font_family());
     let mut rows: Vec<Row> = (0..rows_n)
         .map(|_| Row { text: String::with_capacity(cols_n), runs: Vec::new(), bgs: Vec::new() })
         .collect();
@@ -732,7 +735,7 @@ fn paint_frame(bounds: Bounds<Pixels>, frame: Frame, hud: bool, window: &mut Win
         let label = format!("{:.2} ms", total.as_secs_f64() * 1000.);
         let run = TextRun {
             len: label.len(),
-            font: font(FONT_FAMILY),
+            font: font(font_family()),
             color: hsla(0.33, 0.8, 0.6, 1.),
             background_color: None,
             underline: None,
@@ -824,7 +827,7 @@ impl TerminalView {
                 .items_center()
                 .gap(px(7.))
                 .text_size(px(11.))
-                .font_family(".SystemUIFont")
+                .font_family(crate::theme::ui_font())
                 .child(
                     div()
                         .px(px(7.))

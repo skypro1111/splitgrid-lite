@@ -706,12 +706,12 @@ impl SftpPane {
                 .py(px(4.))
                 .rounded(px(5.))
                 .border_1()
-                .border_color(BORDER)
-                .bg(BG_SURFACE)
+                .border_color(border())
+                .bg(bg_surface())
                 .text_size(px(11.))
                 .text_color(TEXT_PRIMARY)
                 .cursor_pointer()
-                .hover(|d| d.bg(BG_HOVER))
+                .hover(|d| d.bg(bg_hover()))
                 .child(label)
         };
         let ready = matches!(ed.body, EditorBody::Ready(_));
@@ -722,9 +722,9 @@ impl SftpPane {
             .flex()
             .items_center()
             .gap(px(8.))
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(name))
             .when(ed.dirty, |d| d.child(div().size(px(7.)).rounded_full().bg(ACCENT)))
             .when(ed.saved_flash, |d| d.child(div().text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(ACCENT_GREEN).child("Saved")))
@@ -748,12 +748,12 @@ impl SftpPane {
                 .flex_1()
                 .min_h_0()
                 .pt(px(8.))
-                .bg(EDITOR_BG)
+                .bg(editor_bg())
                 .child(
                     Editor::new(state)
                         .appearance(false)
                         .bordered(false)
-                        .font_family(crate::ide::EDITOR_FONT)
+                        .font_family(crate::theme::fonts().editor)
                         .text_size(px(13.))
                         .line_height(px(20.))
                         .size_full(),
@@ -766,7 +766,7 @@ impl SftpPane {
                 .inset_0()
                 .flex()
                 .flex_col()
-                .bg(BG_PRIMARY)
+                .bg(bg_primary())
                 .key_context("RemoteEditor")
                 .on_action(cx.listener(|this, _: &crate::ide::SaveFile, _, cx| this.save_remote(cx)))
                 .on_action(cx.listener(|this, _: &crate::ide::ToggleComment, window, cx| {
@@ -837,12 +837,12 @@ fn small_btn(id: impl Into<ElementId>, label: &'static str, accent: bool) -> Sta
         .py(px(6.))
         .rounded(px(6.))
         .border_1()
-        .border_color(BORDER)
-        .bg(BG_SURFACE)
+        .border_color(border())
+        .bg(bg_surface())
         .text_size(px(11.))
         .text_color(if accent { ACCENT } else { TEXT_PRIMARY })
         .cursor_pointer()
-        .hover(|d| d.bg(BG_HOVER))
+        .hover(|d| d.bg(bg_hover()))
         .child(label)
 }
 
@@ -877,8 +877,8 @@ impl Render for SftpPane {
                 .justify_center()
                 .rounded(px(5.))
                 .border_1()
-                .border_color(BORDER)
-                .bg(BG_SURFACE)
+                .border_color(border())
+                .bg(bg_surface())
                 .text_size(px(13.))
                 .map(|d| if enabled { d.text_color(ACCENT).cursor_pointer() } else { d.text_color(TEXT_MUTED).opacity(0.5) })
                 .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(title.clone()).build(window, cx))
@@ -893,10 +893,10 @@ impl Render for SftpPane {
             .items_center()
             .justify_center()
             .gap(px(10.))
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_l_1()
             .border_r_1()
-            .border_color(BORDER)
+            .border_color(border())
             .child(
                 arrow("sftp-up", "→", can_up, format!("Upload to remote ({})", items(self.local.selected.len())))
                     .when(can_up, |d| d.on_click(cx.listener(|this, _, _, cx| this.transfer(true, cx)))),
@@ -915,9 +915,9 @@ impl Render for SftpPane {
                 .flex()
                 .items_center()
                 .gap(px(10.))
-                .bg(BG_PRIMARY)
+                .bg(bg_primary())
                 .border_t_1()
-                .border_color(BORDER)
+                .border_color(border())
                 .text_size(px(11.))
                 .child(div().font_weight(FontWeight::SEMIBOLD).child(if t.upload { "Uploading" } else { "Downloading" }))
                 .child(div().child(if total > 0 { format!("{cur}/{total}") } else { "…".into() }))
@@ -929,7 +929,7 @@ impl Render for SftpPane {
                         .flex_col()
                         .gap(px(3.))
                         .child(div().truncate().text_color(TEXT_MUTED).child(file))
-                        .child(div().h(px(3.)).rounded(px(2.)).bg(BG_HOVER).child(div().h_full().rounded(px(2.)).bg(ACCENT).w(relative(pct)))),
+                        .child(div().h(px(3.)).rounded(px(2.)).bg(bg_hover()).child(div().h_full().rounded(px(2.)).bg(ACCENT).w(relative(pct)))),
                 )
                 .child(
                     div()
@@ -938,8 +938,8 @@ impl Render for SftpPane {
                         .py(px(3.))
                         .rounded(px(4.))
                         .border_1()
-                        .border_color(BORDER)
-                        .bg(BG_SURFACE)
+                        .border_color(border())
+                        .bg(bg_surface())
                         .cursor_pointer()
                         .child("Cancel")
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -974,7 +974,7 @@ impl Render for SftpPane {
                         .flex()
                         .items_center()
                         .border_t_1()
-                        .border_color(BORDER)
+                        .border_color(border())
                         .bg(hexa(0xf14c4c, 0.12))
                         .child(red_banner(e).flex_1())
                         .child(
@@ -1013,8 +1013,8 @@ impl SftpPane {
                     .px(px(10.))
                     .py(px(6.))
                     .border_b_1()
-                    .border_color(BORDER)
-                    .bg(BG_PRIMARY)
+                    .border_color(border())
+                    .bg(bg_primary())
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(TEXT_MUTED)
@@ -1085,7 +1085,7 @@ impl SftpPane {
                 .rounded(px(4.))
                 .text_size(px(FONT * 0.85))
                 .text_color(TEXT_MUTED)
-                .map(|d| if disabled { d.opacity(0.5) } else { d.cursor_pointer().hover(|d| d.text_color(ACCENT).bg(BG_HOVER)) })
+                .map(|d| if disabled { d.opacity(0.5) } else { d.cursor_pointer().hover(|d| d.text_color(ACCENT).bg(bg_hover())) })
                 .child(label)
         };
         let toolbar = div()
@@ -1095,9 +1095,9 @@ impl SftpPane {
             .flex()
             .items_center()
             .gap(px(6.))
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .child(div().flex_1().min_w_0().flex().items_center().overflow_hidden().children(crumb_els))
             .child(tool("newdir", "+ New folder", side.busy).when(!side.busy, |d| {
                 d.on_click(cx.listener(move |this, _, window, cx| this.start_inline(kind, Inline::NewFolder, window, cx)))
@@ -1133,9 +1133,9 @@ impl SftpPane {
         let header = div()
             .flex()
             .flex_none()
-            .bg(BG_SURFACE)
+            .bg(bg_surface())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .child(header_cell("h-name", "Name", Col::Name, None, false, cx))
             .when(show_size, |d| d.child(header_cell("h-size", "Size", Col::Size, Some(6.5), true, cx)))
             .when(show_mod, |d| d.child(header_cell("h-mod", "Modified", Col::Modified, Some(8.5), false, cx)))
@@ -1154,7 +1154,7 @@ impl SftpPane {
                 .flex_1()
                 .px(px(4.))
                 .rounded(px(3.))
-                .bg(BG_PRIMARY)
+                .bg(bg_primary())
                 .border_1()
                 .border_color(ACCENT)
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
@@ -1175,7 +1175,7 @@ impl SftpPane {
                     .flex()
                     .text_color(TEXT_MUTED)
                     .cursor_pointer()
-                    .hover(|d| d.bg(BG_HOVER))
+                    .hover(|d| d.bg(bg_hover()))
                     .child(cell(None).child("↩ .."))
                     .on_click(cx.listener(move |this, _, _, cx| this.navigate(kind, parent.clone(), cx)))
                     .into_any_element(),
@@ -1216,7 +1216,7 @@ impl SftpPane {
                     .id(SharedString::from(format!("row-{kind:?}-{}", e.name)))
                     .flex()
                     .when(selected, |d| {
-                        d.bg(BG_HOVER).shadow(vec![BoxShadow {
+                        d.bg(bg_hover()).shadow(vec![BoxShadow {
                             color: c(ACCENT),
                             offset: point(px(2.), px(0.)),
                             blur_radius: px(0.),
@@ -1224,7 +1224,7 @@ impl SftpPane {
                             inset: true,
                         }])
                     })
-                    .when(!selected, |d| d.hover(|d| d.bg(BG_HOVER)))
+                    .when(!selected, |d| d.hover(|d| d.bg(bg_hover())))
                     .when(e.is_dir, |d| d.cursor_pointer())
                     .child(name_cell)
                     .when(show_size, |d| d.child(cell(Some(6.5)).flex().justify_end().child(if e.is_dir { "—".into() } else { sftp_format::size(e.size) })))
@@ -1281,8 +1281,8 @@ impl SftpPane {
                         .py(px(3.))
                         .rounded(px(4.))
                         .border_1()
-                        .border_color(BORDER)
-                        .bg(BG_SURFACE)
+                        .border_color(border())
+                        .bg(bg_surface())
                         .cursor_pointer()
                         .child("Cancel")
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1304,7 +1304,7 @@ impl SftpPane {
             .text_size(px(FONT))
             .child(toolbar)
             .when(side.loading, |d| d.child(div().h(px(2.)).bg(ACCENT).opacity(0.7)))
-            .when_some(side.op_error.clone(), |d, e| d.child(red_banner(e).border_b_1().border_color(BORDER)))
+            .when_some(side.op_error.clone(), |d, e| d.child(red_banner(e).border_b_1().border_color(border())))
             .children(confirm)
             .child(
                 div()
@@ -1335,7 +1335,7 @@ impl SftpPane {
                 .text_size(px(FONT * 0.92))
                 .text_color(if danger { ACCENT_RED } else { TEXT_PRIMARY })
                 .cursor_pointer()
-                .hover(|d| d.bg(BG_HOVER))
+                .hover(|d| d.bg(bg_hover()))
                 .child(label)
         };
         let single = self.side_ref(kind).selected.iter().next().cloned().filter(|_| self.side_ref(kind).selected.len() == 1);
@@ -1348,9 +1348,9 @@ impl SftpPane {
                     .flex()
                     .flex_col()
                     .gap(px(1.))
-                    .bg(BG_SURFACE)
+                    .bg(bg_surface())
                     .border_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .rounded(px(6.))
                     .shadow(vec![BoxShadow { color: c(hexa(0, 0.4)), offset: point(px(0.), px(4.)), blur_radius: px(16.), spread_radius: px(0.), inset: false }])
                     .occlude()

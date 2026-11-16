@@ -34,7 +34,24 @@ const BASE16: [(u32, u8); 16] = [
     rgba(0xe4e4e4, 0xff),
 ];
 const FOREGROUND: (u32, u8) = rgba(0xe4e4e4, 0xeb);
+/// The default base; the live one follows the app background (Settings → Appearance).
+#[cfg(test)]
 pub const BACKGROUND: u32 = 0x141414;
+
+fn rgb_u32(c: Rgba) -> u32 {
+    let b = |v: f32| (v * 255.).round() as u32;
+    (b(c.r) << 16) | (b(c.g) << 8) | b(c.b)
+}
+
+/// The terminal background: the app background (Electron's xterm theme follows it too).
+pub fn background() -> u32 {
+    rgb_u32(crate::theme::palette().primary)
+}
+
+/// ANSI black: a hair above the background.
+fn black() -> u32 {
+    rgb_u32(crate::theme::palette().terminal_black)
+}
 const CURSOR: (u32, u8) = rgba(0xffffff, 0xff);
 
 fn hex(c: u32) -> Rgb {
@@ -44,7 +61,8 @@ fn hex(c: u32) -> Rgb {
 /// xterm's 256-colour palette beyond the base 16: the 6×6×6 cube, then 24 greys.
 pub fn indexed(i: u8) -> Rgb {
     match i {
-        0..=15 => hex(BASE16[i as usize].0),
+        0 => hex(black()),
+        1..=15 => hex(BASE16[i as usize].0),
         16..=231 => {
             let i = i - 16;
             let level = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
@@ -61,7 +79,8 @@ fn named_default(n: NamedColor) -> (u32, u8) {
     use NamedColor::*;
     match n {
         Foreground | BrightForeground => FOREGROUND,
-        Background => (BACKGROUND, 0xff),
+        Background => (background(), 0xff),
+        Black => (black(), 0xff),
         Cursor => CURSOR,
         DimForeground => (FOREGROUND.0, 0xa0),
         DimBlack | DimRed | DimGreen | DimYellow | DimBlue | DimMagenta | DimCyan | DimWhite => {

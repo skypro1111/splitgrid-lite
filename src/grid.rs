@@ -49,7 +49,7 @@ pub fn icon_button(id: impl Into<ElementId>, name: &str, size: f32) -> Stateful<
         .rounded(px(4.))
         .cursor_pointer()
         .text_color(TEXT_MUTED)
-        .hover(|d| d.bg(BG_HOVER).text_color(TEXT_PRIMARY))
+        .hover(|d| d.bg(bg_hover()).text_color(TEXT_PRIMARY))
         .child(svg().path(icon(name)).size(px(size)).text_color(TEXT_MUTED))
 }
 
@@ -140,7 +140,11 @@ impl AppView {
                         .child(lifted.left(-clip.origin.x).top(-clip.origin.y).w(full.width).h(full.height)),
                     _ => div().absolute().inset_0().child(lifted.inset_0()),
                 };
-                d.child(div().absolute().inset_0().bg(hexa(0x000000, 0.6)).opacity(progress)).child(lifted)
+                // The backdrop occludes the grid underneath: without it a click or a
+                // drag over the lifted pane also lands on the tile below it, which then
+                // takes the keyboard focus and starts its own selection.
+                let backdrop = div().id("focus-backdrop").absolute().inset_0().occlude().child(div().size_full().bg(hexa(0x000000, 0.6)).opacity(progress));
+                d.child(backdrop).child(lifted)
             })
             .into_any_element()
     }
@@ -153,7 +157,7 @@ impl AppView {
             .gap(px(16.))
             .items_center()
             .justify_center()
-            .child(div().text_size(px(32.)).font_weight(FontWeight::BOLD).text_color(BG_SURFACE).child("SplitGrid"))
+            .child(div().text_size(px(32.)).font_weight(FontWeight::BOLD).text_color(bg_surface()).child("SplitGrid"))
             .child(
                 div()
                     .id("add-container")
@@ -165,9 +169,9 @@ impl AppView {
                     .rounded(px(6.))
                     .text_size(px(12.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .bg(BG_SURFACE)
+                    .bg(bg_surface())
                     .border_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .cursor_pointer()
                     .hover(|d| d.border_color(ACCENT))
                     .child(svg().path(icon("plus-square")).size(px(16.)).text_color(TEXT_PRIMARY))
@@ -195,7 +199,7 @@ impl AppView {
             .flex()
             .flex_col()
             .border_1()
-            .border_color(BORDER)
+            .border_color(border())
             .rounded(px(6.))
             .overflow_hidden()
             .child(
@@ -208,9 +212,9 @@ impl AppView {
                     .px(px(6.))
                     .text_size(px(10.))
                     .text_color(TEXT_MUTED)
-                    .bg(BG_PRIMARY)
+                    .bg(bg_primary())
                     .border_b_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(
                         div()
                             .flex_1()
@@ -242,11 +246,11 @@ impl AppView {
             LayoutNode::Leaf(l) => {
                 // A closed pane shrinking away: its slot, blank.
                 if self.layout_anim.is_closing(&l.container_id) {
-                    return div().size_full().bg(BG_PRIMARY).into_any_element();
+                    return div().size_full().bg(bg_primary()).into_any_element();
                 }
                 // Shown in the focus-mode overlay instead; keep its slot.
                 let pane = if lifted == Some(l.container_id.as_str()) {
-                    div().size_full().bg(BG_PRIMARY).into_any_element()
+                    div().size_full().bg(bg_primary()).into_any_element()
                 } else {
                     self.render_pane(&l.container_id, false, window, cx)
                 };
@@ -427,9 +431,9 @@ impl AppView {
             .flex()
             .items_center()
             .gap(px(8.))
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_b_1()
-            .border_color(BORDER)
+            .border_color(border())
             .when(draggable, |d| {
                 d.cursor_grab().on_mouse_down(
                     MouseButton::Left,
@@ -459,7 +463,7 @@ impl AppView {
                             .text_size(px(8.))
                             .line_height(px(8.))
                             .text_color(hexa(0, 0.))
-                            .group_hover("pane-close", |s| s.text_color(BG_PRIMARY))
+                            .group_hover("pane-close", |s| s.text_color(bg_primary()))
                             .child("×"),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.close_pane(&p_close, cx))),
@@ -476,7 +480,7 @@ impl AppView {
                         .justify_center()
                         .rounded(px(4.))
                         .cursor_pointer()
-                        .hover(|d| d.bg(BG_HOVER))
+                        .hover(|d| d.bg(bg_hover()))
                         .child(svg().path(icon(if into { "tray-in" } else { "tray-out" })).size(px(13.)).text_color(TEXT_MUTED))
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_zone_tray(&p_tray, cx))),
                 )
@@ -491,7 +495,7 @@ impl AppView {
                     .justify_center()
                     .rounded(px(4.))
                     .cursor_pointer()
-                    .hover(|d| d.bg(BG_HOVER))
+                    .hover(|d| d.bg(bg_hover()))
                     .child(
                         svg()
                             .path(icon(if lifted { "compress" } else { "expand" }))
@@ -580,13 +584,13 @@ impl AppView {
             .relative()
             .size_full()
             .p(px(PANE_PADDING))
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .flex()
             .flex_col()
             .overflow_hidden()
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, _, cx| this.set_focused_pane(&focus_id, cx)))
             .child(header)
-            .child(div().flex_1().min_h_0().bg(BG_PRIMARY).child(body))
+            .child(div().flex_1().min_h_0().bg(bg_primary()).child(body))
             // Over everything, without catching the mouse: the focus ring, or the dimming.
             .map(|d| {
                 if focused && !lifted {
@@ -649,7 +653,7 @@ impl AppView {
             .rounded(px(8.))
             .overflow_hidden()
             .opacity(0.92)
-            .bg(BG_PRIMARY)
+            .bg(bg_primary())
             .border_1()
             .border_color(hexa(0xffffff, 0.08))
             .shadow(vec![BoxShadow {
@@ -670,11 +674,11 @@ impl AppView {
                     .items_center()
                     .gap(px(6.))
                     .border_b_1()
-                    .border_color(BORDER)
+                    .border_color(border())
                     .child(div().size(px(7.)).flex_none().rounded_full().bg(ACCENT_RED).opacity(0.7))
                     .child(div().min_w_0().truncate().text_size(px(11.)).font_weight(FontWeight::SEMIBOLD).text_color(TEXT_PRIMARY).child(name)),
             )
-            .child(div().flex_1().bg(BG_SURFACE));
+            .child(div().flex_1().bg(bg_surface()));
 
         Some(
             div()
