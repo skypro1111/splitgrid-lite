@@ -524,6 +524,7 @@ impl AppView {
                         .on_click(cx.listener(move |this, _, _, cx| this.reconnect(&rid, cx))),
                 )
             })
+            .children(self.render_processes_button(&pid, ssh, cx))
             .child(
                 icon_button(SharedString::from(format!("split-r-{pid}")), "split-right", 14.)
                     .on_click(cx.listener(move |this, _, _, cx| this.split(Direction::Horizontal, Some(p_right.clone()), cx))),

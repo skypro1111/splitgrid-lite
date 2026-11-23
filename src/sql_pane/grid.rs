@@ -147,8 +147,9 @@ pub struct ResultGrid {
 }
 
 impl ResultGrid {
-    pub(crate) fn has_menu(&self) -> bool {
-        self.menu.is_some()
+    /// The open context menu, for the browser panes it may cover.
+    pub(crate) fn menu_cover(&self) -> Option<crate::overlay::Cover> {
+        self.menu.map(crate::overlay::Cover::menu)
     }
 
     pub fn new(columns: Vec<Column>, cx: &mut Context<Self>) -> Self {
@@ -1077,33 +1078,58 @@ impl ResultGrid {
         let editable = self.model.editable();
         let cells_editable = self.selection.is_some_and(|s| s.cols().any(|c| self.model.column_editable(c)));
         deferred(
-            anchored().position(at).snap_to_window_with_margin(px(8.)).child(
-                div()
-                    .id("sql-grid-menu")
-                    .min_w(px(190.))
-                    .p(px(4.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(1.))
-                    .bg(bg_surface())
-                    .border_1()
-                    .border_color(border())
-                    .rounded(px(6.))
-                    .shadow(vec![BoxShadow { color: c(hexa(0, 0.4)), offset: point(px(0.), px(4.)), blur_radius: px(16.), spread_radius: px(0.), inset: false }])
-                    .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                        this.menu = None;
-                        cx.notify();
-                    }))
-                    .child(item("g-copy", "Copy", "⌘C", true).on_click(act(|this, cx| this.copy(false, cx))))
-                    .child(item("g-copy-h", "Copy with headers", "⇧⌘C", true).on_click(act(|this, cx| this.copy(true, cx))))
-                    .when(editable, |d| {
-                        d.child(div().my(px(3.)).h(px(1.)).bg(BORDER_SUBTLE))
-                            .child(item("g-null", "Set NULL", "⇧⌘N", cells_editable).when(cells_editable, |d| d.on_click(act(Self::set_null))))
-                            .child(item("g-add", "Add row", "⌘N", true).on_click(act(Self::add_row)))
-                            .child(item("g-del", "Delete row(s)", "⌘⌫", true).on_click(act(Self::delete_selected_rows)))
-                    }),
-            ),
+            anchored()
+                .position(at)
+                .snap_to_window_with_margin(px(8.))
+                .child(
+                    div()
+                        .id("sql-grid-menu")
+                        .child(crate::overlay::recorder(at, 0))
+                        .min_w(px(190.))
+                        .p(px(4.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.))
+                        .bg(bg_surface())
+                        .border_1()
+                        .border_color(border())
+                        .rounded(px(6.))
+                        .shadow(vec![BoxShadow {
+                            color: c(hexa(0, 0.4)),
+                            offset: point(px(0.), px(4.)),
+                            blur_radius: px(16.),
+                            spread_radius: px(0.),
+                            inset: false,
+                        }])
+                        .occlude()
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            cx.notify();
+                        }))
+                        .child(
+                            item("g-copy", "Copy", "⌘C", true)
+                                .on_click(act(|this, cx| this.copy(false, cx))),
+                        )
+                        .child(
+                            item("g-copy-h", "Copy with headers", "⇧⌘C", true)
+                                .on_click(act(|this, cx| this.copy(true, cx))),
+                        )
+                        .when(editable, |d| {
+                            d.child(div().my(px(3.)).h(px(1.)).bg(BORDER_SUBTLE))
+                                .child(
+                                    item("g-null", "Set NULL", "⇧⌘N", cells_editable)
+                                        .when(cells_editable, |d| d.on_click(act(Self::set_null))),
+                                )
+                                .child(
+                                    item("g-add", "Add row", "⌘N", true)
+                                        .on_click(act(Self::add_row)),
+                                )
+                                .child(
+                                    item("g-del", "Delete row(s)", "⌘⌫", true)
+                                        .on_click(act(Self::delete_selected_rows)),
+                                )
+                        }),
+                ),
         )
         .with_priority(1)
         .into_any_element()

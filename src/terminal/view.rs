@@ -49,6 +49,8 @@ pub enum TerminalEvent {
     TitleChanged,
     /// A remote shell's connection state changed.
     Remote(RemoteStatus),
+    /// A command was typed at the prompt and submitted (crate::commands::capture).
+    Command(String),
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -85,6 +87,8 @@ pub struct TerminalView {
     reported_button: Option<Button>,
     /// A layout tween is running: don't resize the terminal until it settles.
     resize_hold: bool,
+    /// The line being typed, for the sidebar's recent-command feed.
+    capture: std::cell::RefCell<crate::commands::capture::LineCapture>,
 }
 
 /// The grid's bounds on screen and its cell size, as of the last frame.
@@ -120,6 +124,21 @@ impl TerminalView {
         let initial = GridSize { cols: 80, rows: 24, cell_width: 8., cell_height: 17. };
         let (terminal, events) = Terminal::spawn(initial, cwd.filter(|p| p.is_dir()), env)?;
         Ok(Spawned { terminal, events })
+    }
+
+    /// A local shell for container `id`: its persistent session when it has
+    /// one or the option is on (crate::ptyd), else an in-process PTY.
+    pub fn spawn_local(id: &str, cwd: Option<std::path::PathBuf>, env: std::collections::HashMap<String, String>, meta: sg_ptyd::Meta) -> anyhow::Result<Spawned> {
+        let cwd = cwd.filter(|p| p.is_dir());
+        if let Some((terminal, events)) = crate::ptyd::open(id, cwd.clone(), env.clone(), meta) {
+            return Ok(Spawned { terminal, events });
+        }
+        Self::spawn(cwd, env)
+    }
+
+    /// The persistent session behind this pane, if it runs in one.
+    pub fn daemon_session(&self) -> Option<&crate::ptyd::Session> {
+        self.terminal.daemon_session()
     }
 
     /// Open an SSH shell; the view shows "connecting" until the server answers.
@@ -170,6 +189,7 @@ impl TerminalView {
             selecting: false,
             reported_button: None,
             resize_hold: false,
+            capture: Default::default(),
         }
     }
 
@@ -204,8 +224,10 @@ impl TerminalView {
     /// Type text into the terminal as a paste (bracketed when the program asked for it).
     pub fn paste_text(&self, text: &str) {
         let bracketed = self.mode().contains(TermMode::BRACKETED_PASTE);
+        let bytes = keys::paste(text, bracketed);
+        self.keep_capture_in_step(&bytes);
         self.scroll_to_bottom();
-        self.terminal.write(keys::paste(text, bracketed));
+        self.terminal.write(bytes);
     }
 
     pub fn set_password_offer(&mut self, label: SharedString, sudo: bool) {
@@ -218,8 +240,37 @@ impl TerminalView {
         }
     }
 
+    /// Type `text` raw, as if from the keyboard, and let the command capture
+    /// see it (the Commands / Prompts popovers).
+    pub fn type_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.note_user_input(text.as_bytes(), cx);
+        self.scroll_to_bottom();
+        self.terminal.write(text.as_bytes().to_vec());
+    }
+
+    /// Input the user typed: feed it to the command capture, with the visible
+    /// prompt line (a password prompt there keeps the line out of the feed).
+    fn note_user_input(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        let line = prompt_line(&self.terminal.term.lock());
+        let capture = self.capture.get_mut();
+        capture.note_prompt_line(&line);
+        for command in capture.feed_input(&String::from_utf8_lossy(bytes)) {
+            cx.emit(TerminalEvent::Command(command));
+        }
+    }
+
+    /// Text typed for the user (a todo's Run, an agent's `sg-terminal send`):
+    /// the capture follows the line, but nothing it completes is recorded.
+    fn keep_capture_in_step(&self, bytes: &[u8]) {
+        let line = prompt_line(&self.terminal.term.lock());
+        let mut capture = self.capture.borrow_mut();
+        capture.note_prompt_line(&line);
+        capture.feed_input(&String::from_utf8_lossy(bytes));
+    }
+
     /// Write raw bytes (typed text, a key) as if from the keyboard.
     pub fn write_input(&self, bytes: Vec<u8>) {
+        self.keep_capture_in_step(&bytes);
         self.scroll_to_bottom();
         self.terminal.write(bytes);
     }
@@ -381,6 +432,7 @@ impl TerminalView {
                 }
             };
             if let Some(bytes) = line_edit {
+                self.note_user_input(bytes, cx);
                 self.scroll_to_bottom();
                 self.terminal.write(bytes);
                 cx.stop_propagation();
@@ -390,16 +442,22 @@ impl TerminalView {
                 "v" => {
                     if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
                         let bracketed = self.mode().contains(TermMode::BRACKETED_PASTE);
+                        let bytes = keys::paste(&text, bracketed);
+                        self.note_user_input(&bytes, cx);
                         self.scroll_to_bottom();
-                        self.terminal.write(keys::paste(&text, bracketed));
+                        self.terminal.write(bytes);
                     }
                     cx.stop_propagation();
                 }
                 "c" => {
                     // Copy the selection; with nothing selected, interrupt (Electron does the same).
-                    match self.terminal.term.lock().selection_to_string().filter(|t| !t.is_empty()) {
+                    let selection = self.terminal.term.lock().selection_to_string().filter(|t| !t.is_empty());
+                    match selection {
                         Some(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
-                        None => self.terminal.write(&b"\x03"[..]),
+                        None => {
+                            self.note_user_input(b"\x03", cx);
+                            self.terminal.write(&b"\x03"[..]);
+                        }
                     }
                     cx.stop_propagation();
                 }
@@ -427,6 +485,7 @@ impl TerminalView {
 
         let app_cursor = self.mode().contains(TermMode::APP_CURSOR);
         if let Some(bytes) = keys::encode(&ks.key, ks.key_char.as_deref(), mods, app_cursor) {
+            self.note_user_input(&bytes, cx);
             self.terminal.term.lock().selection = None;
             self.scroll_to_bottom();
             self.terminal.write(bytes);
@@ -863,6 +922,80 @@ impl TerminalView {
     }
 }
 
+/// The prompt line the user is typing at: the cursor's row up to the cursor,
+/// with the rows it soft-wraps from (a long `Enter passphrase for key …:` in a
+/// narrow pane), up to the 160 characters the capture looks at.
+fn prompt_line<T: alacritty_terminal::event::EventListener>(term: &alacritty_terminal::Term<T>) -> String {
+    let grid = term.grid();
+    let cols = grid.columns();
+    let row_text = |line: Line, upto: usize| -> String {
+        let row = &grid[line];
+        (0..upto.min(cols))
+            .map(|col| &row[Column(col)])
+            .filter(|cell| !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER))
+            .map(|cell| cell.c)
+            .collect()
+    };
+    let cursor = grid.cursor.point;
+    let top = Line(-(grid.history_size() as i32));
+    let mut text = row_text(cursor.line, cursor.column.0);
+    let mut line: Line = cursor.line;
+    while line > top && cols > 0 && text.chars().count() < 160 {
+        let prev: Line = line - 1;
+        if !grid[prev][Column(cols - 1)].flags.contains(Flags::WRAPLINE) {
+            break;
+        }
+        text.insert_str(0, &row_text(prev, cols));
+        line = prev;
+    }
+    text
+}
+
 fn mouse_mods(m: &Modifiers) -> MouseMods {
     MouseMods { shift: m.shift, alt: m.alt, ctrl: m.control }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prompt_line;
+    use crate::commands::capture::LineCapture;
+    use alacritty_terminal::event::VoidListener;
+    use alacritty_terminal::term::test::TermSize;
+    use alacritty_terminal::term::{Config, Term};
+    use alacritty_terminal::vte::ansi::Processor;
+
+    fn term(cols: usize, output: &str) -> Term<VoidListener> {
+        let mut term = Term::new(Config::default(), &TermSize::new(cols, 6), VoidListener);
+        let mut parser: Processor = Processor::new();
+        parser.advance(&mut term, output.as_bytes());
+        term
+    }
+
+    /// Would the line typed now be kept out of the feed?
+    fn suppressed(term: &Term<VoidListener>) -> bool {
+        let mut c = LineCapture::default();
+        c.note_prompt_line(&prompt_line(term));
+        c.feed_input("s3cret\r").is_empty()
+    }
+
+    #[test]
+    fn reads_the_line_up_to_the_cursor() {
+        let t = term(40, "old output\r\n[sudo] password for me: ");
+        assert_eq!(prompt_line(&t), "[sudo] password for me: ");
+        assert!(suppressed(&t));
+    }
+
+    #[test]
+    fn a_soft_wrapped_passphrase_prompt_still_arms() {
+        let t = term(16, "$ ssh host\r\nEnter passphrase for key '/home/me/.ssh/id_ed25519': ");
+        assert!(prompt_line(&t).starts_with("Enter passphrase"), "{:?}", prompt_line(&t));
+        assert!(suppressed(&t));
+    }
+
+    #[test]
+    fn an_ordinary_prompt_does_not_arm() {
+        let t = term(16, "Password: ok\r\nuser@host:~/src/project $ ");
+        assert!(!prompt_line(&t).contains("Password"), "a hard newline ends the line");
+        assert!(!suppressed(&t));
+    }
 }

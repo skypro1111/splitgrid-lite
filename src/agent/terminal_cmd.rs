@@ -351,7 +351,7 @@ impl AppView {
             Some(c) => self.connect_saved(id.clone(), c.id.clone(), window, cx),
             None => {
                 let env = self.agent_env(&id);
-                match TerminalView::spawn(cwd.map(Into::into), env) {
+                match TerminalView::spawn_local(&id, cwd.map(Into::into), env, self.ptyd_meta(&id)) {
                     Ok(spawned) => self.add_pane(id.clone(), spawned, None, window, cx),
                     Err(e) => return fail("open_failed", format!("{e:#}")),
                 }

@@ -1,0 +1,24 @@
+[package]
+name = "sg-ptyd"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Persistent local terminals for SplitGrid Lite: the per-session PTY daemon (splitgrid-ptyd), its protocol and client."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "splitgrid-ptyd"
+path = "src/bin/splitgrid-ptyd.rs"
+
+[dependencies]
+# The same PTY spawn Lite's in-process terminals use (login shell, env, setsid).
+alacritty_terminal = "0.26"
+libc = "0.2"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

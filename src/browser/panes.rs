@@ -132,16 +132,47 @@ impl AppView {
         }
     }
 
-    /// Anything of the app's own drawn where a web view could hide it.
-    fn overlay_open(&self, cx: &App) -> bool {
-        self.popover.is_some()
+    /// Popovers and context menus open now: browser panes hide only under them.
+    fn open_covers(&self, cx: &App) -> Vec<crate::overlay::Cover> {
+        let mut open = Vec::new();
+        if let Some(p) = &self.popover {
+            open.push(crate::overlay::Cover {
+                at: p.at,
+                slot: 0,
+                guess: p.guess,
+            });
+            if p.kind == crate::app::PopoverKind::AddWorkspace && self.recent_flyout {
+                open.push(crate::overlay::Cover {
+                    slot: 1,
+                    ..crate::overlay::Cover::menu(p.at)
+                });
+            }
+        }
+        open.extend(self.procs.pop_cover());
+        open.extend(
+            self.sftp_panes
+                .values()
+                .filter_map(|(p, _)| p.read(cx).menu_cover()),
+        );
+        open.extend(
+            self.ide_panes
+                .values()
+                .filter_map(|(p, _)| p.read(cx).menu_cover()),
+        );
+        for (p, _) in self.sql_panes.values() {
+            open.extend(p.read(cx).menu_covers(cx));
+        }
+        open
+    }
+
+    /// Anything of the app's own drawn over the whole window, hiding every web view.
+    fn overlay_open(&self) -> bool {
+        self.procs.modal_open()
             || self.env_picker_open
             || self.settings_tab.is_some()
             || self.editor.is_some()
+            || self.sync_settings.is_some()
             || matches!(self.drag, Some(Drag::Pane { active: true, .. }))
-            || self.sftp_panes.values().any(|(p, _)| p.read(cx).has_menu())
-            || self.ide_panes.values().any(|(p, _)| p.read(cx).has_menu())
-            || self.sql_panes.values().any(|(p, _)| p.read(cx).has_menu(cx))
     }
 
     /// Decide which web views may show this frame (before the grid paints and
@@ -154,11 +185,25 @@ impl AppView {
         let leaves: HashSet<String> = active.and_then(|w| w.layout_tree.as_ref()).map(|t| t.leaf_ids().into_iter().collect()).unwrap_or_default();
         let focused = active.and_then(|w| w.focused_container_id.clone());
         let focus_mode = self.focus_mode.clone().filter(|id| leaves.contains(id));
-        let scene = Scene { overlay: self.overlay_open(cx), focus_mode: focus_mode.as_deref(), focus_animating: self.focus_anim.is_some() };
+        let scene = Scene {
+            overlay: self.overlay_open(),
+            focus_mode: focus_mode.as_deref(),
+            focus_animating: self.focus_anim.is_some(),
+        };
+        let open = self.open_covers(cx);
+        let covers = crate::overlay::covered(&open, cx);
+        let tiles = self.pane_bounds.borrow();
         for (id, entry) in &self.browser_panes {
-            let visible = scene.visible(id, leaves.contains(id));
-            let dimmed = focused.as_deref() != Some(id.as_str()) && focus_mode.as_deref() != Some(id.as_str());
-            entry.pane.update(cx, |p, _| p.set_presentation(visible, dimmed));
+            let covered = !covers.is_empty()
+                && tiles
+                    .get(id)
+                    .is_none_or(|t| covers.iter().any(|c| t.intersects(c)));
+            let visible = !covered && scene.visible(id, leaves.contains(id));
+            let dimmed = focused.as_deref() != Some(id.as_str())
+                && focus_mode.as_deref() != Some(id.as_str());
+            entry
+                .pane
+                .update(cx, |p, _| p.set_presentation(visible, dimmed));
         }
     }
 }

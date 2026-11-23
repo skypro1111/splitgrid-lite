@@ -1016,8 +1016,17 @@ impl SqlPane {
     // ── Editing results ─────────────────────────────────────────────────────
 
     /// A context menu is open (it may spill over a browser pane's web view).
-    pub(crate) fn has_menu(&self, cx: &App) -> bool {
-        self.menu.is_some() || self.active_grid().is_some_and(|(_, g)| g.read(cx).has_menu())
+    /// Its open context menus (its own, the result grid's), for the browser panes they may cover.
+    pub(crate) fn menu_covers(&self, cx: &App) -> Vec<crate::overlay::Cover> {
+        let grid = self
+            .active_grid()
+            .and_then(|(_, g)| g.read(cx).menu_cover());
+        self.menu
+            .as_ref()
+            .map(|(at, _)| crate::overlay::Cover::menu(*at))
+            .into_iter()
+            .chain(grid)
+            .collect()
     }
 
     fn active_grid(&self) -> Option<(u64, Entity<ResultGrid>)> {

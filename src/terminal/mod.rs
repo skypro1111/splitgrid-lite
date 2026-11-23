@@ -46,21 +46,47 @@ pub enum RemoteStatus {
 
 /// Forwards the I/O side's events to the UI thread.
 #[derive(Clone)]
-pub struct Listener(UnboundedSender<TermEvent>);
+pub struct Listener {
+    tx: UnboundedSender<TermEvent>,
+    /// Set while a persistent session's buffered output is replayed
+    /// (ptyd.rs): the terminal's answers to old queries, old OSC 52 copies and
+    /// old bells are history, not something to act on again.
+    replaying: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
 
 impl EventListener for Listener {
     fn send_event(&self, event: Event) {
-        let _ = self.0.unbounded_send(TermEvent::Term(event));
+        if self.replaying.as_ref().is_some_and(|r| r.load(std::sync::atomic::Ordering::Relaxed)) && is_reply_or_side_effect(&event) {
+            return;
+        }
+        let _ = self.tx.unbounded_send(TermEvent::Term(event));
     }
 }
 
+/// Events a replay must not repeat.
+fn is_reply_or_side_effect(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::PtyWrite(_) | Event::ColorRequest(..) | Event::TextAreaSizeRequest(_) | Event::ClipboardStore(..) | Event::ClipboardLoad(..) | Event::Bell
+    )
+}
+
 impl Listener {
+    fn new(tx: UnboundedSender<TermEvent>) -> Self {
+        Self { tx, replaying: None }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(tx: UnboundedSender<TermEvent>, replaying: Option<Arc<std::sync::atomic::AtomicBool>>) -> Self {
+        Self { tx, replaying }
+    }
+
     pub fn status(&self, status: RemoteStatus) {
-        let _ = self.0.unbounded_send(TermEvent::Remote(status));
+        let _ = self.tx.unbounded_send(TermEvent::Remote(status));
     }
 
     pub fn password_prompt(&self, visible: bool) {
-        let _ = self.0.unbounded_send(TermEvent::PasswordPrompt(visible));
+        let _ = self.tx.unbounded_send(TermEvent::PasswordPrompt(visible));
     }
 }
 
@@ -89,6 +115,9 @@ enum Io {
         master: Option<OwnedFd>,
     },
     Remote(tokio::sync::mpsc::UnboundedSender<RemoteCmd>),
+    /// A persistent session in a `splitgrid-ptyd` daemon (crate::ptyd).
+    /// Dropping it detaches; the session ends only when asked to.
+    Daemon(crate::ptyd::Session),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -125,7 +154,7 @@ impl Terminal {
     /// events (wakeups, title, bell, exit); the view drains it.
     pub fn spawn(size: GridSize, cwd: Option<std::path::PathBuf>, extra_env: HashMap<String, String>) -> anyhow::Result<(Self, UnboundedReceiver<TermEvent>)> {
         let (tx, rx) = unbounded();
-        let listener = Listener(tx);
+        let listener = Listener::new(tx);
 
         let mut env = extra_env;
         env.insert("TERM".to_owned(), "xterm-256color".to_owned());
@@ -155,7 +184,7 @@ impl Terminal {
     /// hands the returned ends to the task that talks to the server.
     pub fn remote(size: GridSize) -> (Self, UnboundedReceiver<TermEvent>, RemoteEnds) {
         let (tx, rx) = unbounded();
-        let listener = Listener(tx);
+        let listener = Listener::new(tx);
         let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size.term_size(), listener.clone())));
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let ends = RemoteEnds { term: term.clone(), events: listener, commands: cmd_rx, size };
@@ -169,6 +198,29 @@ impl Terminal {
         }
     }
 
+    /// Attach to a persistent session (crate::ptyd): the grid starts at the
+    /// session's size and its buffered output is replayed into it.
+    pub fn attach_daemon(conn: sg_ptyd::client::Conn, socket: std::path::PathBuf, cell: (f32, f32)) -> std::io::Result<(Self, UnboundedReceiver<TermEvent>)> {
+        let (tx, rx) = unbounded();
+        let replaying = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let listener = Listener { tx, replaying: Some(replaying.clone()) };
+        let (session, attached) = crate::ptyd::Session::attach(conn, socket, listener.clone(), replaying, |size| {
+            let grid = GridSize { cols: size.cols.max(2), rows: size.rows.max(1), cell_width: cell.0, cell_height: cell.1 };
+            let term = Arc::new(FairMutex::new(Term::new(Config::default(), &grid.term_size(), listener.clone())));
+            (term, grid)
+        })?;
+        let (term, size) = attached;
+        Ok((Self { term, io: Io::Daemon(session), size }, rx))
+    }
+
+    /// The persistent session behind this terminal, if any.
+    pub fn daemon_session(&self) -> Option<&crate::ptyd::Session> {
+        match &self.io {
+            Io::Daemon(s) => Some(s),
+            _ => None,
+        }
+    }
+
     pub fn is_remote(&self) -> bool {
         matches!(self.io, Io::Remote(_))
     }
@@ -177,6 +229,7 @@ impl Terminal {
     pub fn foreground(&self) -> Option<procinfo::Process> {
         match &self.io {
             Io::Local { master, .. } => procinfo::foreground(master.as_ref()?.as_raw_fd()),
+            Io::Daemon(s) => procinfo::foreground(s.master()?),
             Io::Remote(_) => None,
         }
     }
@@ -186,6 +239,8 @@ impl Terminal {
         match &self.io {
             // SAFETY: a plain syscall on an fd we own.
             Io::Local { master, .. } => Some(unsafe { libc::tcgetsid(master.as_ref()?.as_raw_fd()) }).filter(|p| *p > 0),
+            // The daemon told us at attach; the passed master confirms it while the session lives.
+            Io::Daemon(s) => s.master().map(|m| unsafe { libc::tcgetsid(m) }).filter(|p| *p > 0).or(Some(s.pid())),
             Io::Remote(_) => None,
         }
     }
@@ -198,6 +253,7 @@ impl Terminal {
             Io::Remote(tx) => {
                 let _ = tx.send(RemoteCmd::Input(bytes.into().into_owned()));
             }
+            Io::Daemon(s) => s.input(bytes.into().into_owned()),
         }
     }
 
@@ -215,6 +271,7 @@ impl Terminal {
             Io::Remote(tx) => {
                 let _ = tx.send(RemoteCmd::Resize { cols: size.cols, rows: size.rows });
             }
+            Io::Daemon(s) => s.resize(size.cols, size.rows, size.cell_width.round() as u16, size.cell_height.round() as u16),
         }
     }
 }
@@ -228,6 +285,8 @@ impl Drop for Terminal {
             Io::Remote(tx) => {
                 let _ = tx.send(RemoteCmd::Close);
             }
+            // Detach (the session keeps running); `Session`'s own drop does it.
+            Io::Daemon(_) => {}
         }
     }
 }

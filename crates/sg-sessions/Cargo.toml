@@ -1,0 +1,19 @@
+[package]
+name = "sg-sessions"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The SplitGrid Lite menu-bar helper listing persistent terminal sessions (splitgrid-sessions)."
+
+[[bin]]
+name = "splitgrid-sessions"
+path = "src/main.rs"
+
+[dependencies]
+sg-ptyd = { path = "../sg-ptyd" }
+serde_json.workspace = true
+# The same objc2 line the main app uses (Cargo.toml: objc2 0.6 / app-kit 0.3).
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"

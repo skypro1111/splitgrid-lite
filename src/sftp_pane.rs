@@ -220,8 +220,11 @@ impl SftpPane {
     }
 
     /// A context menu is open (it may spill over a browser pane's web view).
-    pub(crate) fn has_menu(&self) -> bool {
-        self.menu.is_some()
+    /// The open context menu, for the browser panes it may cover.
+    pub(crate) fn menu_cover(&self) -> Option<crate::overlay::Cover> {
+        self.menu
+            .as_ref()
+            .map(|(_, at)| crate::overlay::Cover::menu(*at))
     }
 
     /// The pane title: "label — /remote/path" once connected.
@@ -768,15 +771,26 @@ impl SftpPane {
                 .flex_col()
                 .bg(bg_primary())
                 .key_context("RemoteEditor")
-                .on_action(cx.listener(|this, _: &crate::ide::SaveFile, _, cx| this.save_remote(cx)))
-                .on_action(cx.listener(|this, _: &crate::ide::ToggleComment, window, cx| {
+                .on_action(
+                    cx.listener(|this, _: &crate::ide::SaveFile, _, cx| this.save_remote(cx)),
+                )
+                .on_action(cx.listener(|this, _: &crate::ide::Duplicate, window, cx| {
                     if let Some(ed) = this.editor.as_ref()
                         && let EditorBody::Ready(state) = &ed.body
                     {
-                        let (state, path) = (state.clone(), PathBuf::from(&ed.path));
-                        crate::ide::toggle_comment(&state, &path, window, cx);
+                        crate::ide::duplicate(&state.clone(), window, cx);
                     }
                 }))
+                .on_action(
+                    cx.listener(|this, _: &crate::ide::ToggleComment, window, cx| {
+                        if let Some(ed) = this.editor.as_ref()
+                            && let EditorBody::Ready(state) = &ed.body
+                        {
+                            let (state, path) = (state.clone(), PathBuf::from(&ed.path));
+                            crate::ide::toggle_comment(&state, &path, window, cx);
+                        }
+                    }),
+                )
                 .child(header)
                 .when_some(ed.error.clone(), |d, e| d.child(red_banner(e)))
                 .when(ed.confirm_discard, |d| {
@@ -1340,34 +1354,59 @@ impl SftpPane {
         };
         let single = self.side_ref(kind).selected.iter().next().cloned().filter(|_| self.side_ref(kind).selected.len() == 1);
         deferred(
-            anchored().position(at).snap_to_window_with_margin(px(8.)).child(
-                div()
-                    .id("sftp-menu")
-                    .min_w(px(150.))
-                    .p(px(4.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(1.))
-                    .bg(bg_surface())
-                    .border_1()
-                    .border_color(border())
-                    .rounded(px(6.))
-                    .shadow(vec![BoxShadow { color: c(hexa(0, 0.4)), offset: point(px(0.), px(4.)), blur_radius: px(16.), spread_radius: px(0.), inset: false }])
-                    .occlude()
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                        this.menu = None;
-                        cx.notify();
-                    }))
-                    .when_some(single, |d, name| {
-                        d.child(item("m-rename", "Rename", false).on_click(cx.listener(move |this, _, window, cx| this.start_inline(kind, Inline::Rename(name.clone()), window, cx))))
-                    })
-                    .child(item("m-delete", "Delete", true).on_click(cx.listener(move |this, _, _, cx| {
-                        this.menu = None;
-                        this.side(kind).confirm_delete = true;
-                        cx.notify();
-                    })))
-                    .child(item("m-newdir", "New folder", false).on_click(cx.listener(move |this, _, window, cx| this.start_inline(kind, Inline::NewFolder, window, cx)))),
-            ),
+            anchored()
+                .position(at)
+                .snap_to_window_with_margin(px(8.))
+                .child(
+                    div()
+                        .id("sftp-menu")
+                        .child(crate::overlay::recorder(at, 0))
+                        .min_w(px(150.))
+                        .p(px(4.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.))
+                        .bg(bg_surface())
+                        .border_1()
+                        .border_color(border())
+                        .rounded(px(6.))
+                        .shadow(vec![BoxShadow {
+                            color: c(hexa(0, 0.4)),
+                            offset: point(px(0.), px(4.)),
+                            blur_radius: px(16.),
+                            spread_radius: px(0.),
+                            inset: false,
+                        }])
+                        .occlude()
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            cx.notify();
+                        }))
+                        .when_some(single, |d, name| {
+                            d.child(item("m-rename", "Rename", false).on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.start_inline(
+                                        kind,
+                                        Inline::Rename(name.clone()),
+                                        window,
+                                        cx,
+                                    )
+                                },
+                            )))
+                        })
+                        .child(item("m-delete", "Delete", true).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                this.menu = None;
+                                this.side(kind).confirm_delete = true;
+                                cx.notify();
+                            },
+                        )))
+                        .child(item("m-newdir", "New folder", false).on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.start_inline(kind, Inline::NewFolder, window, cx)
+                            },
+                        ))),
+                ),
         )
         .with_priority(1)
         .into_any_element()

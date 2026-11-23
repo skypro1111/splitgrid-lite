@@ -4,12 +4,15 @@
 //! General holds every Electron setting this app acts on, stored in the shared
 //! `app-settings.json` as patches (keys this app doesn't know are kept). Left
 //! out because Lite has no such feature (yet): the background colour, the
-//! terminal renderer and Windows shell, browser-extension control, the Claude
-//! Code pane, and the Fast chat and Account tabs. Workspace history acts
+//! terminal renderer and Windows shell, the Claude Code pane, and the Fast
+//! chat and Account tabs. Browser-extension control has its own module
+//! (settings/chrome.rs). Workspace history acts
 //! through its service rather than as a plain switch (settings/history.rs).
 
 mod appearance;
+mod chrome;
 mod history;
+mod ptyd;
 mod skills;
 
 use std::collections::{HashMap, HashSet};
@@ -67,12 +70,14 @@ pub struct ManagerState {
     pub(crate) history: history::HistoryUi,
     /// Settings → Appearance's colour field and font selects.
     pub(crate) appearance: appearance::AppearanceUi,
+    /// Agent integrations → browser control: the pairing code and the status tick.
+    pub(crate) chrome: chrome::ChromeUi,
 }
 
 // ── General ──────────────────────────────────────────────────────────────────
 
 /// A settings card (settings-ui's Card): title, description, then its controls.
-fn card(title: &'static str, desc: Option<&'static str>) -> Div {
+pub(crate) fn card(title: &'static str, desc: Option<&'static str>) -> Div {
     div()
         .mb(px(14.))
         .p(px(18.))
@@ -85,7 +90,7 @@ fn card(title: &'static str, desc: Option<&'static str>) -> Div {
 }
 
 /// A labelled switch (settings-ui's Toggle): 40×23 track, 18px knob.
-fn toggle(
+pub(crate) fn toggle(
     key: &'static str,
     label: &'static str,
     desc: Option<&'static str>,
@@ -404,7 +409,8 @@ impl AppView {
                     |t, v, cx| set(t, &[("agentSftpWrite", v)], cx),
                     cx,
                 ))),
-            ));
+            ))
+            .child(nested(self.render_chrome(integrations, cx)));
 
         div()
             .id("settings-general")
@@ -415,6 +421,7 @@ impl AppView {
             .child(self.render_appearance(window, cx))
             .child(notifications)
             .child(terminal_card)
+            .child(self.render_ptyd(cx))
             .child(shortcuts)
             .child(agents)
             // Acts immediately (consent → download): historyEnabled is saved once the install succeeded.
@@ -484,6 +491,7 @@ impl AppView {
 
     /// General's stateful controls, made when the Settings window opens.
     fn ensure_settings_controls(&mut self, cx: &mut Context<Self>) {
+        self.ensure_chrome_poll(cx);
         if self.manager.volume.is_some() {
             return;
         }

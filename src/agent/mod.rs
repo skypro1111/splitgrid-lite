@@ -10,6 +10,9 @@
 pub mod activity;
 pub mod attention;
 pub mod browser_cmd;
+pub mod ext_channel;
+pub mod ext_protocol;
+pub mod ext_route;
 pub mod history_cmd;
 pub mod install;
 pub mod notify;
@@ -34,6 +37,8 @@ pub struct AgentConfig {
     pub token: String,
     helpers: PathBuf,
     settings_file: PathBuf,
+    /// The companion browser extension's channel (`tab:` surfaces), when served.
+    ext: Option<std::sync::Arc<ext_channel::Channel>>,
 }
 
 /// The Agent integrations switches (Settings → Agent integrations).
@@ -45,13 +50,27 @@ pub struct Switches {
 
 impl AgentConfig {
     pub fn new(port: u16, data_dir: &Path) -> Self {
-        let token: [u8; 24] = rand::random();
+        let fresh =
+            || base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(rand::random::<[u8; 24]>());
+        // Persistent terminals outlive a run: their shells keep the token they started with.
+        let token = crate::ptyd::stable_agent_token(data_dir, fresh).unwrap_or_else(fresh);
         Self {
             port,
-            token: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(token),
+            token,
             helpers: helpers_dir(),
             settings_file: data_dir.join("app-settings.json"),
+            ext: None,
         }
+    }
+
+    /// With the browser-extension channel the receiver serves on `/ext`.
+    pub fn with_ext(mut self, ext: std::sync::Arc<ext_channel::Channel>) -> Self {
+        self.ext = Some(ext);
+        self
+    }
+
+    pub fn ext(&self) -> Option<&std::sync::Arc<ext_channel::Channel>> {
+        self.ext.as_ref()
     }
 
     /// Read fresh each time: the user may flip them in either app.

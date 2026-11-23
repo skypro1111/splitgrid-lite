@@ -28,6 +28,8 @@ libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
+# The browser extension's WebSocket on the agent receiver (src/agent/ext_channel.rs).
+tungstenite = "0.29"
 trash = "5"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "fs", "io-util"] }
 log = "0.4"
@@ -64,6 +66,8 @@ sql-mssql = { path = "crates/sql-mssql" }
 rust_xlsxwriter = { version = "0.102", default-features = false }
 # Workspace history (src/history.rs, src/agent/history_cmd.rs, Settings).
 sg-history = { path = "crates/sg-history" }
+# Persistent terminals (src/ptyd.rs): the splitgrid-ptyd protocol and client.
+sg-ptyd = { path = "crates/sg-ptyd" }
 
 # Dependencies optimised even in debug: an unoptimised VT parser/renderer makes
 # any performance judgement of the spike meaningless.

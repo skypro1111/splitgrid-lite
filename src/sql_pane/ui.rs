@@ -137,6 +137,7 @@ pub fn popup(id: &'static str, at: Point<Pixels>, items: Vec<AnyElement>, on_clo
         anchored().position(at).snap_to_window_with_margin(px(4.)).child(
             div()
                 .id(id)
+                .child(crate::overlay::recorder(at, 0))
                 .min_w(px(180.))
                 .max_h(px(360.))
                 .overflow_y_scroll()

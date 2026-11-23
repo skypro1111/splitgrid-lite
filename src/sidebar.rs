@@ -338,11 +338,8 @@ impl AppView {
             )
             .child(self.render_notes_todo_buttons(ws, cx));
 
-        let subrows: Vec<AnyElement> = ws
-            .layout_tree
-            .as_ref()
-            .map(|t| t.leaf_ids())
-            .unwrap_or_default()
+        let leaf_ids = ws.layout_tree.as_ref().map(|t| t.leaf_ids()).unwrap_or_default();
+        let subrows: Vec<AnyElement> = leaf_ids
             .iter()
             .filter_map(|cid| ws.container(cid))
             .map(|c| {
@@ -363,15 +360,18 @@ impl AppView {
                     .text_size(px(10.))
                     .text_color(if active { TEXT_PRIMARY } else { TEXT_MUTED })
                     .child(div().size(px(5.)).flex_none().rounded_full().bg(dot))
-                    .child(div().min_w_0().truncate().child(label))
+                    .child(div().min_w_0().truncate().child(label.clone()))
+                    .children(self.render_ports_button(&c.id, &label, cx))
                     .when_some(activity, |d, (kind, unviewed)| d.child(activity_label(&c.id, kind, unviewed)))
                     .into_any_element()
             })
             .collect();
 
         let menu_id = ws.id.clone();
+        let ports_row = self.render_workspace_ports(&ws.id, &leaf_ids, cx);
         row.child(title_line)
             .children(subrows)
+            .children(ports_row)
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
@@ -449,6 +449,9 @@ impl AppView {
         let env_open = self.state.env_todos.iter().filter(|t| t.status() != TodoStatus::Done).count();
         let env_busy = self.state.env_todos.iter().any(|t| t.status() == TodoStatus::InProgress);
         let env_popover = self.popover.as_ref().is_some_and(|p| p.kind == PopoverKind::EnvTodos);
+        let cmds_popover = self.popover.as_ref().is_some_and(|p| p.kind == PopoverKind::Commands);
+        let prompts_popover = self.popover.as_ref().is_some_and(|p| p.kind == PopoverKind::Prompts);
+        let (fav_count, prompt_count) = (self.command_favorite_count(), self.env_prompts().len());
         let sidebar_w = px(if collapsed { SIDEBAR_COLLAPSED } else { self.settings.sidebar_width });
 
         let button = |id: &'static str, icon_name: &'static str, label: &'static str, open: bool| {
@@ -493,8 +496,22 @@ impl AppView {
                         this.toggle_popover(PopoverKind::EnvTodos, at, window, cx);
                     })),
             )
-            .child(button("commands", "commands", "Commands", false))
-            .child(button("prompts", "prompts", "Prompts", false))
+            .child(
+                button("commands", "commands", "Commands", cmds_popover)
+                    .when(fav_count > 0, |d| d.child(crate::commands::count_badge(fav_count, collapsed)))
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        let at = point(sidebar_w + px(8.), ev.position().y - px(200.));
+                        this.toggle_popover(PopoverKind::Commands, at, window, cx);
+                    })),
+            )
+            .child(
+                button("prompts", "prompts", "Prompts", prompts_popover)
+                    .when(prompt_count > 0, |d| d.child(crate::commands::count_badge(prompt_count, collapsed)))
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                        let at = point(sidebar_w + px(8.), ev.position().y - px(200.));
+                        this.toggle_popover(PopoverKind::Prompts, at, window, cx);
+                    })),
+            )
             .child(
                 button("settings", "gear", "Settings", self.settings_tab.is_some())
                     .on_click(cx.listener(|this, _, _, cx| this.open_settings(crate::settings::SettingsTab::Ssh, cx))),

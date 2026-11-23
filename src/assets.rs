@@ -32,6 +32,8 @@ icons!(
     "new-folder",
     "notes",
     "plus-square",
+    "ports",
+    "processes",
     "prompts",
     "reconnect",
     "refresh",

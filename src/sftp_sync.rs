@@ -469,13 +469,24 @@ fn target_result(id: &str, a: &Agg, count_key: &str) -> Value {
 }
 
 /// Upload `files` (relative paths) to every connected target, CONCURRENCY at a time.
-async fn upload_all(job: &Job, files: &[String], targets: &[(String, String, ConnSpec)], agg: &Mutex<HashMap<String, Agg>>) {
-    let stream = futures::stream::iter(files.iter()).take_while(|_| futures::future::ready(!job.cancelled()));
+/// Returns each attempted file with whether every target took it.
+async fn upload_all(
+    job: &Job,
+    files: &[String],
+    targets: &[(String, String, ConnSpec)],
+    agg: &Mutex<HashMap<String, Agg>>,
+) -> Vec<(String, bool)> {
+    let outcomes: Mutex<Vec<(String, bool)>> = Mutex::default();
+    let outcomes_ref = &outcomes;
+    let stream = futures::stream::iter(files.iter())
+        .take_while(|_| futures::future::ready(!job.cancelled()));
     stream
         .for_each_concurrent(CONCURRENCY, |rel| async move {
             let local = job.local_root.join(rel);
+            let mut all_ok = !targets.is_empty();
             for (id, root, spec) in targets {
                 let res = put_file(&job.key(id), spec, &local, &remote_file(root, rel)).await;
+                all_ok &= res.is_ok();
                 let mut a = agg.lock().unwrap();
                 let entry = a.entry(id.clone()).or_insert(Agg { ok: true, ..Default::default() });
                 match res {
@@ -486,8 +497,10 @@ async fn upload_all(job: &Job, files: &[String], targets: &[(String, String, Con
                     }
                 }
             }
+            outcomes_ref.lock().unwrap().push((rel.clone(), all_ok));
         })
         .await;
+    outcomes.into_inner().unwrap()
 }
 
 /// Sync now: upload the whole working directory to every enabled target.
@@ -509,7 +522,8 @@ pub async fn sync_now(job: Job) -> Value {
             a.error = Some(e);
         }
     }
-    upload_all(&job, &plan.files, &targets, &agg).await;
+    let uploaded = upload_all(&job, &plan.files, &targets, &agg).await;
+    publish_uploads(&job, uploaded, Vec::new());
 
     let agg = agg.into_inner().unwrap();
     let results: Vec<Value> = job
@@ -566,7 +580,8 @@ pub async fn push_paths(job: Job, paths: Vec<PathBuf>) -> Value {
             a.error = Some(e);
         }
     }
-    upload_all(&job, &plan.files, &targets, &agg).await;
+    let uploaded = upload_all(&job, &plan.files, &targets, &agg).await;
+    publish_uploads(&job, uploaded, Vec::new());
     let agg = agg.into_inner().unwrap();
     let results: Vec<Value> = job
         .sync
@@ -895,7 +910,8 @@ async fn flush(job: &Job, batch: HashMap<PathBuf, bool>) {
         }
     }
     let agg = Mutex::new(HashMap::new());
-    upload_all(job, &changes.files, &targets, &agg).await;
+    let uploaded = upload_all(job, &changes.files, &targets, &agg).await;
+    publish_uploads(job, uploaded, changes.deletes.clone());
     for (id, root, spec) in &targets {
         for d in &changes.deletes {
             let path = remote_file(root, d);
@@ -919,6 +935,148 @@ async fn flush(job: &Job, batch: HashMap<PathBuf, bool>) {
         changes.deletes.len(),
         errors + failed.len()
     );
+}
+
+// ─── File events (what the IDE highlights) ──────────────────────────────────
+
+/// Files auto sync just uploaded (ok: every target took it) or deleted remotely.
+#[derive(Clone, Debug)]
+pub struct FileEvent {
+    pub workspace_id: String,
+    pub files: Vec<(PathBuf, bool)>,
+    pub deleted: Vec<PathBuf>,
+}
+
+fn listeners() -> &'static Mutex<Vec<futures::channel::mpsc::UnboundedSender<FileEvent>>> {
+    static L: OnceLock<Mutex<Vec<futures::channel::mpsc::UnboundedSender<FileEvent>>>> =
+        OnceLock::new();
+    L.get_or_init(Default::default)
+}
+
+/// Every window hears every workspace's events (and ignores the ones it doesn't show).
+pub fn file_events() -> futures::channel::mpsc::UnboundedReceiver<FileEvent> {
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+    listeners().lock().unwrap().push(tx);
+    rx
+}
+
+/// Tell the windows what a run uploaded (and deleted), as absolute local paths.
+fn publish_uploads(job: &Job, uploaded: Vec<(String, bool)>, deleted: Vec<String>) {
+    let root = &job.local_root;
+    publish(FileEvent {
+        workspace_id: job.workspace_id.clone(),
+        files: uploaded
+            .into_iter()
+            .map(|(rel, ok)| (root.join(rel), ok))
+            .collect(),
+        deleted: deleted.iter().map(|d| root.join(d)).collect(),
+    });
+}
+
+fn publish(ev: FileEvent) {
+    if ev.files.is_empty() && ev.deleted.is_empty() {
+        return;
+    }
+    listeners()
+        .lock()
+        .unwrap()
+        .retain(|tx| tx.unbounded_send(ev.clone()).is_ok());
+}
+
+/// Most file states kept on a workspace (oldest dropped).
+const MAX_FILE_STATES: usize = 5000;
+
+impl SyncConfig {
+    /// Electron's `sync.fileStates`: absolute local path → { status, updatedAt }.
+    /// Folders under a deleted or moved path go too.
+    pub fn record_files(&mut self, files: &[(PathBuf, &str)], deleted: &[PathBuf], now: i64) {
+        let states = self
+            .extra
+            .entry("fileStates")
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !states.is_object() {
+            *states = Value::Object(Map::new());
+        }
+        let Some(map) = states.as_object_mut() else {
+            return;
+        };
+        for d in deleted {
+            let d = d.to_string_lossy();
+            let prefix = format!("{d}/");
+            map.retain(|k, _| k != d.as_ref() && !k.starts_with(&prefix));
+        }
+        for (path, status) in files {
+            map.insert(
+                path.to_string_lossy().into_owned(),
+                json!({ "status": status, "updatedAt": now }),
+            );
+        }
+        if map.len() > MAX_FILE_STATES {
+            let mut by_age: Vec<(i64, String)> = map
+                .iter()
+                .map(|(k, v)| (v["updatedAt"].as_i64().unwrap_or(0), k.clone()))
+                .collect();
+            by_age.sort();
+            for (_, k) in by_age.into_iter().take(map.len() - MAX_FILE_STATES) {
+                map.remove(&k);
+            }
+        }
+    }
+
+    /// The paths whose last sync succeeded (the IDE tree shows them green).
+    pub fn synced_paths(&self) -> HashSet<PathBuf> {
+        self.extra
+            .get("fileStates")
+            .and_then(Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .filter(|(_, v)| v["status"] == "synced")
+                    .map(|(k, _)| PathBuf::from(k))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Electron's per-event log lines and target status (an IDE push).
+    pub fn record_event(&mut self, action: &str, file: &str, target_results: &[Value], now: i64) {
+        for r in target_results {
+            let Some(t) = self
+                .targets
+                .iter_mut()
+                .find(|t| Some(t.id.as_str()) == r["targetId"].as_str())
+            else {
+                continue;
+            };
+            let ok = r["ok"].as_bool().unwrap_or(false);
+            t.last_sync_at = Some(now);
+            t.last_sync_status = Some(if ok { "success" } else { "error" }.into());
+            t.last_sync_error =
+                (!ok).then(|| r["error"].as_str().unwrap_or("Sync failed").to_owned());
+        }
+        let logs = self.logs.get_or_insert_with(Vec::new);
+        let id = || {
+            format!(
+                "{now}-{}",
+                crate::model::workspace::new_id("l").trim_start_matches("l-")
+            )
+        };
+        if target_results.is_empty() {
+            logs.push(json!({ "id": id(), "at": now, "action": action, "filePath": file, "ok": false, "message": "No active sync targets" }));
+        }
+        for r in target_results {
+            let ok = r["ok"].as_bool().unwrap_or(false);
+            let message = if ok {
+                "Synced".to_owned()
+            } else {
+                r["error"].as_str().unwrap_or("Sync failed").to_owned()
+            };
+            logs.push(json!({ "id": id(), "at": now, "action": action, "filePath": file, "targetId": r["targetId"], "ok": ok, "message": message }));
+        }
+        if logs.len() > MAX_LOGS {
+            let drop = logs.len() - MAX_LOGS;
+            logs.drain(..drop);
+        }
+    }
 }
 
 // ─── App glue ───────────────────────────────────────────────────────────────
@@ -962,6 +1120,164 @@ impl crate::app::AppView {
         .detach();
     }
 
+    /// Auto sync, Sync now or a push uploaded files: record them on the workspace.
+    pub(crate) fn apply_sync_file_event(
+        &mut self,
+        ev: FileEvent,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        let Some(ws) = self
+            .state
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == ev.workspace_id)
+        else {
+            return;
+        };
+        let Some(mut sync) = SyncConfig::of(ws) else {
+            return;
+        };
+        let files: Vec<(PathBuf, &str)> = ev
+            .files
+            .into_iter()
+            .map(|(p, ok)| (p, if ok { "synced" } else { "error" }))
+            .collect();
+        sync.record_files(&files, &ev.deleted, crate::model::workspace::now_ms());
+        sync.store(ws);
+        self.changed(cx);
+    }
+
+    /// Tell each IDE pane whether its workspace syncs and which files are synced
+    /// (only when that changed).
+    pub(crate) fn push_ide_sync(&mut self, cx: &mut gpui_kit::Context<Self>) {
+        let panes = &self.ide_panes;
+        self.ide_sync_seen.retain(|id, _| panes.contains_key(id));
+        for (id, (pane, _)) in &self.ide_panes {
+            let Some(ws) = self
+                .state
+                .workspaces
+                .iter()
+                .find(|w| w.container(id).is_some())
+            else {
+                continue;
+            };
+            let sync = SyncConfig::of(ws);
+            let on = sync.as_ref().is_some_and(SyncConfig::configured);
+            let states = ws
+                .extra
+                .get("sync")
+                .and_then(|s| s.get("fileStates"))
+                .cloned();
+            let seen = (on, states);
+            if self.ide_sync_seen.get(id) == Some(&seen) {
+                continue;
+            }
+            let synced = std::rc::Rc::new(sync.map(|s| s.synced_paths()).unwrap_or_default());
+            pane.update(cx, |p, _| p.set_sync(on, synced));
+            self.ide_sync_seen.insert(id.clone(), seen);
+        }
+    }
+
+    /// The IDE tree's "SFTP Push" / "SFTP Pull" on `paths`, relative to the IDE's
+    /// root as in Electron (`localRootPath: rootPath`).
+    pub(crate) fn ide_sftp(
+        &mut self,
+        container: &str,
+        push: bool,
+        paths: Vec<PathBuf>,
+        root: PathBuf,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        let Some((pane, _)) = self.ide_panes.get(container).map(|(p, s)| (p.clone(), s)) else {
+            return;
+        };
+        if self.ide_sftp_runs.contains_key(container) {
+            return;
+        }
+        let Some(ws) = self
+            .state
+            .workspaces
+            .iter()
+            .find(|w| w.container(container).is_some())
+        else {
+            return;
+        };
+        let Some(mut job) = SyncConfig::of(ws)
+            .filter(SyncConfig::configured)
+            .and_then(|s| Job::new(ws, s, self.connections.clone()))
+        else {
+            pane.update(cx, |p, cx| {
+                p.set_sftp_status(Some(("Sync is off for this workspace".into(), true)), cx)
+            });
+            return;
+        };
+        job.local_root = root;
+        let ws_id = ws.id.clone();
+        let verb = if push { "Push" } else { "Pull" };
+        let n = paths.len();
+        let what = if n == 1 {
+            paths[0]
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            format!("{n} items")
+        };
+        self.ide_sftp_runs
+            .insert(container.to_owned(), job.cancel.clone());
+        pane.update(cx, |p, cx| {
+            p.set_sftp_running(format!("{verb}ing {what}…"), cx)
+        });
+        let clicked = paths
+            .first()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let container = container.to_owned();
+        cx.spawn(async move |this, cx| {
+            let work_paths = paths.clone();
+            let result = crate::sftp::call(async move {
+                Ok(if push { push_paths(job, work_paths).await } else { pull_paths(job, work_paths).await })
+            })
+            .await
+            .unwrap_or_else(|e| json!({ "targetResults": [{ "targetId": "", "ok": false, "error": format!("{e:#}") }] }));
+            let _ = this.update(cx, |this, cx| {
+                this.ide_sftp_runs.remove(&container);
+                let results = result["targetResults"].as_array().cloned().unwrap_or_default();
+                let count = result[if push { "pushed" } else { "pulled" }].as_u64().unwrap_or(0);
+                let files = format!("{count} file{}", if count == 1 { "" } else { "s" });
+                let status = if result["cancelled"].as_bool() == Some(true) {
+                    (format!("{verb} cancelled · {files} done"), false)
+                } else if results.iter().all(|r| r["ok"].as_bool() == Some(true)) {
+                    (format!("{verb}ed {files}"), false)
+                } else {
+                    let errs: Vec<&str> = results.iter().filter(|r| r["ok"].as_bool() != Some(true)).filter_map(|r| r["error"].as_str()).collect();
+                    (format!("{verb} failed: {}", errs.join(", ")), true)
+                };
+                if push && let Some(ws) = this.state.workspaces.iter_mut().find(|w| w.id == ws_id) && let Some(mut sync) = SyncConfig::of(ws) {
+                    // Electron's onSyncEvent for a push: target status and a log line per target.
+                    sync.record_event("create-file", &clicked, &results, crate::model::workspace::now_ms());
+                    sync.store(ws);
+                    this.changed(cx);
+                }
+                if let Some((pane, _)) = this.ide_panes.get(&container) {
+                    pane.update(cx, |p, cx| {
+                        p.set_sftp_status(Some(status), cx);
+                        if !push {
+                            p.refresh_after_pull(&paths, cx);
+                        }
+                    });
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn ide_sftp_cancel(&mut self, container: &str) {
+        if let Some(c) = self.ide_sftp_runs.get(container) {
+            c.store(true, Ordering::Relaxed);
+        }
+    }
+
     /// The menu line for a workspace's sync: (label, detail) — None without a configured sync.
     pub(crate) fn sync_menu_entry(&self, ws: &Workspace) -> Option<(String, String)> {
         let sync = SyncConfig::of(ws).filter(SyncConfig::configured)?;
@@ -990,6 +1306,62 @@ impl crate::app::AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_states_record_replace_and_forget_deleted_folders() {
+        let mut sync = SyncConfig::default();
+        let p = |s: &str| PathBuf::from(s);
+        sync.record_files(
+            &[
+                (p("/w/a.txt"), "synced"),
+                (p("/w/d/b.txt"), "synced"),
+                (p("/w/c.txt"), "error"),
+            ],
+            &[],
+            10,
+        );
+        assert_eq!(
+            sync.synced_paths(),
+            [p("/w/a.txt"), p("/w/d/b.txt")].into_iter().collect()
+        );
+        assert_eq!(
+            sync.extra["fileStates"]["/w/c.txt"],
+            json!({ "status": "error", "updatedAt": 10 })
+        );
+        // A deleted folder takes what's under it; a re-upload replaces the state.
+        sync.record_files(&[(p("/w/c.txt"), "synced")], &[p("/w/d")], 20);
+        assert_eq!(
+            sync.synced_paths(),
+            [p("/w/a.txt"), p("/w/c.txt")].into_iter().collect()
+        );
+        // Round-trips through the workspace JSON unchanged (Electron reads the same key).
+        let v = serde_json::to_value(&sync).unwrap();
+        assert_eq!(v["fileStates"]["/w/a.txt"]["status"], "synced");
+    }
+
+    #[test]
+    fn push_event_logs_per_target_and_sets_status() {
+        let mut sync = SyncConfig {
+            targets: vec![SyncTarget {
+                id: "t1".into(),
+                enabled: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        sync.record_event(
+            "create-file",
+            "/w/a.txt",
+            &[json!({ "targetId": "t1", "ok": false, "error": "denied" })],
+            5,
+        );
+        let logs = sync.logs.as_ref().unwrap();
+        assert_eq!(
+            (logs[0]["message"].as_str(), logs[0]["ok"].as_bool()),
+            (Some("denied"), Some(false))
+        );
+        assert_eq!(sync.targets[0].last_sync_status.as_deref(), Some("error"));
+    }
 
     fn tree(entries: &[(&str, &[(&str, bool)])]) -> impl FnMut(&str) -> Vec<(String, bool)> {
         let map: HashMap<String, Vec<(String, bool)>> =

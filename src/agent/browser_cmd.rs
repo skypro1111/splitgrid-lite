@@ -369,10 +369,12 @@ fn help() -> Value {
             "clipboard read|write [text]",
             "network start|list|clear|stop  — capture the page's requests (fetch/XHR + resources)",
             "--target <surface>           — disambiguate when you own several browsers",
+            "--target tab:<c>.<id>        — a tab activated in the SplitGrid Lite browser extension (see list):",
+            "                               open, back, forward, reload, get url|title|text|html, eval, screenshot, close",
             "--zone <name>                — act as that zone (a subagent passes its own; default: main)",
             "--timeout <ms>               — cap for wait selector/text/url/fn/load (default 10s)",
         ],
-        "notSupported": ["pdf", "set viewport", "--target tab:… (no browser extension in SplitGrid Lite)"],
+        "notSupported": ["pdf", "set viewport"],
     }))
 }
 
@@ -381,11 +383,11 @@ fn help() -> Value {
 static SHOT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Our own scratch dir: the Electron app empties `splitgrid-browser` on launch.
-fn screenshot_dir() -> PathBuf {
+pub(super) fn screenshot_dir() -> PathBuf {
     std::env::temp_dir().join("splitgrid-lite-browser")
 }
 
-fn save_screenshot(dir: &Path, png: &[u8]) -> std::io::Result<PathBuf> {
+pub(super) fn save_screenshot(dir: &Path, png: &[u8]) -> std::io::Result<PathBuf> {
     static RESET: std::sync::Once = std::sync::Once::new();
     // Fresh each run: these are throwaway verification shots.
     RESET.call_once(|| {
@@ -592,12 +594,17 @@ impl AppView {
         if matches!(cmd.as_str(), "help" | "--help" | "-h" | "") {
             return Answer::Now(help());
         }
-        if let Some(t) = parsed.target.as_deref().filter(|t| t.starts_with("tab:")) {
-            return Answer::Now(reply(
-                false,
-                Some("no_extension"),
-                json!({ "surface": t, "message": "SplitGrid Lite has no browser-extension bridge to the user's real browser; drop --target to use a browser pane" }),
-            ));
+        // `--target tab:…` names a tab in the user's real browser (the companion
+        // extension), not a pane: those commands never reach a pane.
+        if let Some(t) = parsed
+            .target
+            .as_deref()
+            .filter(|t| super::ext_protocol::is_surface(t))
+        {
+            let ext = self.agent.as_ref().and_then(|a| a.ext().cloned());
+            if let Some(answer) = super::ext_route::run_tab(ext, t, argv, cx) {
+                return answer;
+            }
         }
         if cmd == "clipboard" {
             let sub = rest.first().map(|s| s.to_lowercase()).unwrap_or_else(|| "read".into());
@@ -713,7 +720,16 @@ impl AppView {
                 info
             })
             .collect();
-        ok(json!({ "browsers": browsers, "extensionConnected": false }))
+        // Plus the tabs activated in the browser extension: one call finds every surface.
+        let ext = self.agent.as_ref().and_then(|a| a.ext());
+        let mut browsers = browsers;
+        browsers.extend(
+            ext.map(|e| super::ext_route::list_entries(&e.surfaces()))
+                .unwrap_or_default(),
+        );
+        ok(
+            json!({ "browsers": browsers, "extensionConnected": ext.is_some_and(|e| e.is_connected()) }),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

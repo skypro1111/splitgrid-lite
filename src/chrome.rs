@@ -18,6 +18,26 @@ use crate::theme::*;
 pub const TITLE_H: f32 = 36.;
 const STATUS_H: f32 = 22.;
 const POPOVER_W: f32 = 300.;
+/// The tallest the notes / todo popover gets.
+const POPOVER_MAX_H: f32 = 440.;
+
+/// Where the notes / todo popover opened at `at` starts: on screen, the window
+/// height bounding how low it may start.
+fn popover_origin(at: Point<Pixels>, window: &Window) -> Point<Pixels> {
+    let max_top = window.viewport_size().height - px(POPOVER_MAX_H);
+    let top = if window.is_fullscreen() { px(0.) } else { px(TITLE_H) };
+    point(at.x, at.y.min(max_top).max(top))
+}
+
+/// The most the notes / todo popover may cover before it has painted (its
+/// tallest, kept within the window as `anchored` snaps it): browser panes
+/// clear of it needn't hide, even for a frame.
+pub(crate) fn popover_estimate(at: Point<Pixels>, window: &Window) -> Bounds<Pixels> {
+    let o = popover_origin(at, window);
+    let margin = px(8.);
+    let x = o.x.min(window.viewport_size().width - px(POPOVER_W) - margin).max(margin);
+    Bounds { origin: point(x, o.y), size: size(px(POPOVER_W), px(POPOVER_MAX_H)) }
+}
 
 fn popover_shadow() -> Vec<BoxShadow> {
     vec![BoxShadow {
@@ -78,6 +98,7 @@ impl AppView {
             })
         });
         let dot = if pane.is_some() || context.is_some() { ACCENT_GREEN } else { TEXT_MUTED };
+        let sync = self.render_sync_status(cx);
 
         div()
             .h(px(STATUS_H))
@@ -112,6 +133,8 @@ impl AppView {
                         )
                     }),
             )
+            .children(sync)
+            .child(self.render_resources_segment(cx))
             .into_any_element()
     }
 
@@ -330,18 +353,26 @@ impl AppView {
     // ── Notes / todo popovers ───────────────────────────────────────────────
 
     pub(crate) fn render_popover(&self, popover: Popover, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Popover { kind, at } = popover;
+        let Popover { kind, at, .. } = popover;
         if let PopoverKind::WorkspaceMenu(ws_id) = &kind {
             return self.render_workspace_menu(ws_id.clone(), at, cx);
         }
         if kind == PopoverKind::AddWorkspace {
             return self.render_add_workspace_menu(at, cx);
         }
+        if kind == PopoverKind::Commands {
+            return self.render_commands_popover(at, window, cx);
+        }
+        if kind == PopoverKind::Prompts {
+            return self.render_prompts_popover(at, window, cx);
+        }
         let ws_name = match &kind {
             PopoverKind::Notes(id) | PopoverKind::Todos(id) => {
                 self.state.workspaces.iter().find(|w| &w.id == id).map(|w| w.name.clone()).unwrap_or_default()
             }
-            PopoverKind::EnvTodos | PopoverKind::WorkspaceMenu(_) | PopoverKind::AddWorkspace => String::new(),
+            PopoverKind::EnvTodos | PopoverKind::WorkspaceMenu(_) | PopoverKind::AddWorkspace | PopoverKind::Commands | PopoverKind::Prompts => {
+                String::new()
+            }
         };
 
         let (title, in_progress): (String, usize) = match &kind {
@@ -400,15 +431,13 @@ impl AppView {
             _ => self.render_todo_panel(&kind, cx),
         };
 
-        // Keep it on screen: the window height bounds how low it may start.
-        let max_top = window.viewport_size().height - px(440.);
-        let top = if window.is_fullscreen() { px(0.) } else { px(TITLE_H) };
-        let at = point(at.x, at.y.min(max_top).max(top));
+        let origin = popover_origin(at, window);
 
         deferred(
-            anchored().position(at).snap_to_window_with_margin(px(8.)).child(
+            anchored().position(origin).snap_to_window_with_margin(px(8.)).child(
                 div()
                     .id("popover")
+                    .child(crate::overlay::recorder(at, 0))
                     .w(px(POPOVER_W))
                     .flex()
                     .flex_col()
@@ -427,7 +456,7 @@ impl AppView {
                         }
                     }))
                     .child(header)
-                    .child(body),
+                    .child(body)
             ),
         )
         .with_priority(1)
@@ -435,7 +464,9 @@ impl AppView {
     }
 
     fn render_workspace_menu(&self, ws_id: String, at: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {
-        let Some(ws) = self.state.workspaces.iter().find(|w| w.id == ws_id) else { return div().into_any_element() };
+        let Some(ws) = self.state.workspaces.iter().find(|w| w.id == ws_id) else {
+            return div().into_any_element();
+        };
         let name = ws.name.clone();
         let folder = ws.working_directory.clone().map(|f| tilde(&f));
         let item = |id: &'static str, label: String, danger: bool| {
@@ -452,10 +483,11 @@ impl AppView {
                 .hover(|d| d.bg(bg_hover()))
                 .child(label)
         };
-        let (r_id, f_id, d_id, s_id) = (ws_id.clone(), ws_id.clone(), ws_id.clone(), ws_id.clone());
+        let (r_id, f_id, d_id, s_id, w_id) = (ws_id.clone(), ws_id.clone(), ws_id.clone(), ws_id.clone(), ws_id.clone());
         let menu = || {
             div()
                 .id("ws-menu")
+                .child(crate::overlay::recorder(at, 0))
                 .min_w(px(200.))
                 .p(px(4.))
                 .flex()
@@ -494,7 +526,7 @@ impl AppView {
                 })));
             return deferred(anchored().position(at).snap_to_window_with_margin(px(8.)).child(confirm)).with_priority(1).into_any_element();
         }
-        // Workspace SFTP sync (configured in the Electron app's workspace settings).
+        // Workspace SFTP sync (configured under Settings…, sync_settings.rs).
         let sync = self.sync_menu_entry(ws);
         deferred(
             anchored().position(at).snap_to_window_with_margin(px(8.)).child(
@@ -511,6 +543,10 @@ impl AppView {
                                 this.choose_folder(f_id.clone(), cx);
                             })),
                     )
+                    .child(item("ws-menu-settings", "Settings…".into(), false).on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_popover(cx);
+                        this.open_workspace_settings(w_id.clone(), window, cx);
+                    })))
                     .when_some(sync, |d, (label, detail)| {
                         d.child(
                             item("ws-menu-sync", label, false)
@@ -579,6 +615,7 @@ impl AppView {
             };
             div()
                 .id("recent-flyout")
+                .child(crate::overlay::recorder(at, 1))
                 .absolute()
                 .left(relative(1.))
                 .top(px(-5.))
@@ -600,6 +637,7 @@ impl AppView {
             anchored().position(at).snap_to_window_with_margin(px(8.)).child(
                 div()
                     .id("ws-add-menu")
+                    .child(crate::overlay::recorder(at, 0))
                     .min_w(px(120.))
                     .flex()
                     .flex_col()

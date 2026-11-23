@@ -8,22 +8,29 @@ mod assets;
 mod background;
 mod browser;
 mod chrome;
+mod commands;
 mod grid;
 mod history;
 mod ide;
 mod layout_anim;
 mod model;
+mod overlay;
+mod procs;
+mod prompts;
+mod ptyd;
 mod secrets;
 mod settings;
 mod sftp;
 mod sftp_format;
 mod sftp_pane;
 mod sftp_sync;
+mod sidebar;
+mod single_instance;
+mod sql_pane;
 mod ssh;
 mod ssh_prompt;
 mod ssh_ui;
-mod sidebar;
-mod sql_pane;
+mod sync_settings;
 mod terminal;
 mod theme;
 mod ui;
@@ -70,6 +77,17 @@ fn main() {
     // One data directory with the Electron app: the same workspaces,
     // environments, connections, host keys and credential key.
     let data_dir = app_support_dir("SplitGrid");
+    // One Lite per data dir: a second launch hands over to the first and exits.
+    let _instance = match single_instance::acquire(&data_dir) {
+        Ok(lock) => lock,
+        Err(pid) => {
+            log::info!("SplitGrid Lite already runs (pid {pid:?}): bringing it forward");
+            if let Some(pid) = pid {
+                single_instance::activate(pid);
+            }
+            std::process::exit(0);
+        }
+    };
     let store = match Store::open(data_dir.clone()) {
         Ok(s) => s,
         Err(e) => {
@@ -77,6 +95,11 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // Persistent terminals: sessions under the data dir; install the daemon and
+    // bring up the menu-bar helper when it is in use.
+    ptyd::init(&data_dir);
+    std::thread::spawn(ptyd::startup);
 
     // The agent hooks and skills Agent integrations ask for (off: nothing is touched).
     let installer = agent::install::Installer::new(&data_dir);
@@ -143,8 +166,9 @@ fn main() {
         .detach();
 
         // The receiver agents in our terminals talk to (sg-terminal, hooks); one for all windows.
-        let (agent, requests) = match agent::server::start() {
-            Ok((port, requests)) => (Some(std::rc::Rc::new(agent::AgentConfig::new(port, &data_dir))), Some(requests)),
+        let ext = std::sync::Arc::new(agent::ext_channel::Channel::new(&data_dir));
+        let (agent, requests) = match agent::server::start(Some(ext.clone())) {
+            Ok((port, requests)) => (Some(std::rc::Rc::new(agent::AgentConfig::new(port, &data_dir).with_ext(ext))), Some(requests)),
             Err(e) => {
                 log::error!("agent bridge: {e}");
                 (None, None)

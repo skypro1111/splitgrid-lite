@@ -156,6 +156,9 @@ pub enum PopoverKind {
     WorkspaceMenu(String),
     /// The "+ workspace" menu: New, Open (a folder), Open Recent.
     AddWorkspace,
+    /// The bottom bar's Commands and Prompts (crate::commands, crate::prompts).
+    Commands,
+    Prompts,
 }
 
 #[derive(Clone)]
@@ -163,6 +166,8 @@ pub struct Popover {
     pub kind: PopoverKind,
     /// Window position of the popover's top-left corner.
     pub at: Point<Pixels>,
+    /// What it may cover before it has painted (crate::overlay).
+    pub guess: Bounds<Pixels>,
 }
 
 pub(crate) struct Pane {
@@ -202,6 +207,10 @@ pub struct AppView {
     pub(crate) layout_anim: crate::layout_anim::LayoutAnim,
 
     pub(crate) popover: Option<Popover>,
+    /// The notes / todo popover's bounds as last painted (None until it has
+    /// painted): browser panes it doesn't cover stay on screen.
+    /// The Commands / Prompts popovers' fields and editor state.
+    pub(crate) snippets: crate::commands::SnippetsUi,
     /// The "+ workspace → Open Recent" list, read when that menu opens; and whether its flyout shows.
     pub(crate) recent_workspaces: Vec<Workspace>,
     pub(crate) recent_flyout: bool,
@@ -234,8 +243,14 @@ pub struct AppView {
     /// The connection a picker last tried, to retry it after accepting a new host key.
     ssh_last_attempt: HashMap<String, String>,
     pub(crate) editor: Option<crate::ssh_ui::ConnectionEditor>,
+    /// The open Workspace Settings modal (SFTP sync, sync_settings.rs).
+    pub(crate) sync_settings: Option<crate::sync_settings::SyncSettingsUi>,
     pub(crate) sftp_panes: HashMap<String, (Entity<crate::sftp_pane::SftpPane>, Subscription)>,
     pub(crate) ide_panes: HashMap<String, (Entity<crate::ide::IdePane>, Subscription)>,
+    /// What each IDE pane was last told about its workspace's sync (push_ide_sync).
+    pub(crate) ide_sync_seen: HashMap<String, (bool, Option<serde_json::Value>)>,
+    /// A running IDE push / pull per IDE pane: its cancel flag.
+    pub(crate) ide_sftp_runs: HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub(crate) sql_panes: HashMap<String, (Entity<crate::sql_pane::SqlPane>, Subscription)>,
     /// Browser panes of every workspace in this window (browser/panes.rs).
     pub(crate) browser_panes: HashMap<String, crate::browser::panes::Entry>,
@@ -249,6 +264,8 @@ pub struct AppView {
     app_settings_seen: Option<std::time::SystemTime>,
     /// What SPLITGRID_DEBUG_LAYOUT printed last.
     debug_layout_seen: Option<String>,
+    /// Terminals' process trees and ports, and their popovers / task manager (procs/ui.rs).
+    pub(crate) procs: crate::procs::ui::Procs,
 }
 
 impl AppView {
@@ -317,12 +334,36 @@ impl AppView {
                     this.sync_app_settings(window, cx);
                     // Workspace SFTP auto sync: a watcher per workspace whose sync is on.
                     this.reconcile_sync_watchers(cx);
+                    // Persistent terminals: session names, Settings status.
+                    this.ptyd_poll(cx);
                 });
                 if alive.is_err() {
                     break;
                 }
             }
         });
+
+        // What SFTP sync uploaded: the IDE tree highlights synced files.
+        let mut file_events = crate::sftp_sync::file_events();
+        cx.spawn(async move |this, cx| {
+            use futures::StreamExt as _;
+            while let Some(ev) = file_events.next().await {
+                if this.update(cx, |this, cx| this.apply_sync_file_event(ev, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        // Development aid: SPLITGRID_DEBUG_QUIT_AFTER=<secs> closes the window the
+        // way a confirmed ⌘Q does (the last window closing quits the app).
+        if let Some(secs) = std::env::var("SPLITGRID_DEBUG_QUIT_AFTER").ok().and_then(|v| v.parse::<u64>().ok()) {
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(std::time::Duration::from_secs(secs)).await;
+                let _ = this.update_in(cx, |_, window, _| window.remove_window());
+            })
+            .detach();
+        }
 
         cx.on_app_quit(|this, _cx| {
             this.flush();
@@ -350,6 +391,7 @@ impl AppView {
             sidebar_anim: None,
             layout_anim: Default::default(),
             popover: None,
+            snippets: crate::commands::SnippetsUi::new(window, cx),
             recent_workspaces: Vec::new(),
             recent_flyout: false,
             ws_menu_confirm: false,
@@ -371,9 +413,12 @@ impl AppView {
             last_auto_reconnect: HashMap::new(),
             ssh_last_attempt: HashMap::new(),
             editor: None,
+            sync_settings: None,
             // Development aid for screenshots: SPLITGRID_DEBUG_OPEN=settings, general or skills.
             sftp_panes: HashMap::new(),
             ide_panes: HashMap::new(),
+            ide_sync_seen: HashMap::new(),
+            ide_sftp_runs: HashMap::new(),
             sql_panes: HashMap::new(),
             browser_panes: HashMap::new(),
             settings_tab: match std::env::var("SPLITGRID_DEBUG_OPEN").as_deref() {
@@ -387,6 +432,7 @@ impl AppView {
             attention: Default::default(),
             app_settings_seen: None,
             debug_layout_seen: None,
+            procs: Default::default(),
         }
     }
 
@@ -437,6 +483,46 @@ impl AppView {
             let _ = this.update(cx, |this, _| this.flush());
         }));
         cx.notify();
+    }
+
+    /// ⌘Q / menu Quit closes only the active window, after asking: it ends that
+    /// window's terminals and SSH sessions. Other windows close on their own; the
+    /// last one closing quits the app (main.rs). One question at a time.
+    fn confirm_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        static ASKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        use std::sync::atomic::Ordering;
+        if ASKING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let last = cx.windows().len() <= 1;
+        // Count what really survives: only panes attached to splitgrid-ptyd. SSH
+        // panes and terminals opened before persistence was turned on end.
+        let total = self.panes.len();
+        let kept = self.panes.values().filter(|p| p.view.read(cx).daemon_session().is_some()).count();
+        let ended = total - kept;
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        let detail = match (kept, ended) {
+            (0, _) if last => "This ends every terminal and SSH session.".to_owned(),
+            (0, _) => "This ends the terminals and SSH sessions of this window.".to_owned(),
+            (k, 0) => format!("Its {k} persistent terminal{} keep running and reattach next time.", plural(k)),
+            (k, e) => format!(
+                "{k} persistent terminal{} keep running and reattach next time. The other {e} (SSH, or opened before persistence was on) end.",
+                plural(k)
+            ),
+        };
+        let detail = if last { detail } else { format!("{detail} Other windows stay open.") };
+        let (message, button) = if last { ("Quit SplitGrid Lite?", "Quit") } else { ("Close this window?", "Close Window") };
+        let answer = window.prompt(PromptLevel::Info, message, Some(&detail), &[PromptButton::ok(button), PromptButton::cancel("Cancel")], cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let confirmed = answer.await.ok() == Some(0);
+            ASKING.store(false, Ordering::SeqCst);
+            if confirmed {
+                // Removing the window releases this view, which saves the
+                // environment; main.rs quits once no window is left.
+                let _ = this.update_in(cx, |_, window, _| window.remove_window());
+            }
+        })
+        .detach();
     }
 
     fn flush(&mut self) {
@@ -500,6 +586,7 @@ impl AppView {
             for ws in &state.workspaces {
                 for c in &ws.containers {
                     self.panes.remove(&c.id);
+                    crate::ptyd::end_session(&c.id);
                 }
             }
         }
@@ -567,8 +654,12 @@ impl AppView {
     pub(crate) fn open_folder_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let answer = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open".into()) });
         cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(paths))) = answer.await else { return };
-            let Some(dir) = paths.into_iter().next() else { return };
+            let Ok(Ok(Some(paths))) = answer.await else {
+                return;
+            };
+            let Some(dir) = paths.into_iter().next() else {
+                return;
+            };
             let _ = this.update_in(cx, |this, window, cx| {
                 let name = dir
                     .file_name()
@@ -598,7 +689,9 @@ impl AppView {
     }
 
     pub(crate) fn close_workspace(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ix) = self.state.workspaces.iter().position(|w| w.id == id) else { return };
+        let Some(ix) = self.state.workspaces.iter().position(|w| w.id == id) else {
+            return;
+        };
         let ws = self.state.workspaces.remove(ix);
         // Reopenable from "+ workspace → Open Recent" (the Electron app keeps the same list).
         let mut snapshot = ws.clone();
@@ -611,6 +704,8 @@ impl AppView {
         }
         for c in &ws.containers {
             self.panes.remove(&c.id);
+            // Closing a workspace ends its persistent terminals too.
+            crate::ptyd::end_session(&c.id);
         }
         if self.state.workspaces.is_empty() {
             self.state.workspaces.push(Workspace::new("Workspace 1", None));
@@ -642,8 +737,12 @@ impl AppView {
             prompt: Some("Use as working folder".into()),
         });
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = answer.await else { return };
-            let Some(dir) = paths.into_iter().next() else { return };
+            let Ok(Ok(Some(paths))) = answer.await else {
+                return;
+            };
+            let Some(dir) = paths.into_iter().next() else {
+                return;
+            };
             let _ = this.update(cx, |this, cx| {
                 if let Some(ws) = this.state.workspaces.iter_mut().find(|w| w.id == ws_id) {
                     let default_name = ws.name.starts_with("Workspace ");
@@ -681,7 +780,9 @@ impl AppView {
     }
 
     fn commit_rename(&mut self, text: String, cx: &mut Context<Self>) {
-        let Some(what) = self.renaming.take() else { return };
+        let Some(what) = self.renaming.take() else {
+            return;
+        };
         self.focus_pending = true;
         if text.is_empty() {
             cx.notify();
@@ -732,9 +833,17 @@ impl AppView {
             self.recent_workspaces = recent;
             self.recent_flyout = false;
             self.recent_hover = [false; 2];
+        } else if matches!(kind, PopoverKind::Commands | PopoverKind::Prompts) {
+            self.open_snippets(&kind, window, cx);
         }
         self.ws_menu_confirm = false;
-        self.popover = Some(Popover { kind, at });
+        // Until it paints: the notes / todo popover's most, or just the clicked point.
+        let guess = if matches!(kind, PopoverKind::Notes(_) | PopoverKind::Todos(_) | PopoverKind::EnvTodos) {
+            crate::chrome::popover_estimate(at, window)
+        } else {
+            crate::overlay::Cover::menu(at).guess
+        };
+        self.popover = Some(Popover { kind, at, guess });
         cx.notify();
     }
 
@@ -768,7 +877,9 @@ impl AppView {
     }
 
     fn set_notes(&mut self, text: String, cx: &mut Context<Self>) {
-        let Some(Popover { kind: PopoverKind::Notes(ws_id), .. }) = &self.popover else { return };
+        let Some(Popover { kind: PopoverKind::Notes(ws_id), .. }) = &self.popover else {
+            return;
+        };
         if text == self.notes_shown {
             return;
         }
@@ -785,7 +896,7 @@ impl AppView {
         match kind {
             PopoverKind::Todos(ws_id) => self.state.workspaces.iter().find(|w| &w.id == ws_id).map(|w| &w.todos),
             PopoverKind::EnvTodos => Some(&self.state.env_todos),
-            PopoverKind::Notes(_) | PopoverKind::WorkspaceMenu(_) | PopoverKind::AddWorkspace => None,
+            PopoverKind::Notes(_) | PopoverKind::WorkspaceMenu(_) | PopoverKind::AddWorkspace | PopoverKind::Commands | PopoverKind::Prompts => None,
         }
     }
 
@@ -793,12 +904,14 @@ impl AppView {
         match kind {
             PopoverKind::Todos(ws_id) => self.state.workspaces.iter_mut().find(|w| &w.id == ws_id).map(|w| &mut w.todos),
             PopoverKind::EnvTodos => Some(&mut self.state.env_todos),
-            PopoverKind::Notes(_) | PopoverKind::WorkspaceMenu(_) | PopoverKind::AddWorkspace => None,
+            PopoverKind::Notes(_) | PopoverKind::WorkspaceMenu(_) | PopoverKind::AddWorkspace | PopoverKind::Commands | PopoverKind::Prompts => None,
         }
     }
 
     pub(crate) fn submit_todo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(kind) = self.popover.as_ref().map(|p| p.kind.clone()) else { return };
+        let Some(kind) = self.popover.as_ref().map(|p| p.kind.clone()) else {
+            return;
+        };
         let text = self.todo_input.read(cx).value().trim().to_string();
         if text.is_empty() {
             return;
@@ -834,7 +947,9 @@ impl AppView {
 
     /// "Run": type the task into the active workspace's focused terminal (not executed).
     pub(crate) fn run_text(&mut self, text: String, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active() else { return };
+        let Some(ws) = self.state.active() else {
+            return;
+        };
         let target = ws
             .focused_container_id
             .clone()
@@ -853,7 +968,9 @@ impl AppView {
     /// Start the active workspace's terminals that aren't running yet: local
     /// shells, and SSH sessions (reconnected on restore, as in SplitGrid).
     fn ensure_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active() else { return };
+        let Some(ws) = self.state.active() else {
+            return;
+        };
         let fallback = ws.working_directory.clone();
         let leaves = ws.layout_tree.as_ref().map(|t| t.leaf_ids()).unwrap_or_default();
         let mut local = Vec::new();
@@ -871,13 +988,14 @@ impl AppView {
         }
 
         for (id, cwd, zoom) in local {
-            match TerminalView::spawn(cwd.map(PathBuf::from), self.agent_env(&id)) {
+            match TerminalView::spawn_local(&id, cwd.map(PathBuf::from), self.agent_env(&id), self.ptyd_meta(&id)) {
                 Ok(spawned) => self.add_pane(id, spawned, zoom, window, cx),
                 Err(e) => log::error!("starting a shell for pane {id}: {e:#}"),
             }
         }
         self.ensure_sftp_panes(window, cx);
         self.ensure_ide_panes(window, cx);
+        self.push_ide_sync(cx);
         self.ensure_sql_panes(window, cx);
         for (id, connection_id, label, zoom) in remote {
             // By id, else by label (older state without a connection id).
@@ -903,7 +1021,9 @@ impl AppView {
 
     /// SFTP panes that have a connection but no live view yet (restore, or just chosen).
     fn ensure_sftp_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active() else { return };
+        let Some(ws) = self.state.active() else {
+            return;
+        };
         let fallback_local = ws.working_directory.clone().filter(|p| !p.trim().is_empty());
         let wanted: Vec<(String, String, Option<String>, Option<String>)> = ws
             .layout_tree
@@ -920,10 +1040,10 @@ impl AppView {
             })
             .collect();
         for (id, conn_id, remote, local) in wanted {
-            let Some(conn) = self.connections.lock().unwrap().get(&conn_id).cloned() else { continue };
-            let local = local
-                .or_else(|| fallback_local.clone())
-                .unwrap_or_else(|| crate::sftp::local_home().to_string_lossy().into_owned());
+            let Some(conn) = self.connections.lock().unwrap().get(&conn_id).cloned() else {
+                continue;
+            };
+            let local = local.or_else(|| fallback_local.clone()).unwrap_or_else(|| crate::sftp::local_home().to_string_lossy().into_owned());
             let (params, check) = (self.ssh_params(&conn), self.host_key_checker_for(&conn));
             let label = conn.label.clone();
             let pane = cx.new(|cx| crate::sftp_pane::SftpPane::new(label, params, check, remote, local, window, cx));
@@ -935,7 +1055,9 @@ impl AppView {
 
     /// IDE panes of the active workspace that have no live view yet.
     fn ensure_ide_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active() else { return };
+        let Some(ws) = self.state.active() else {
+            return;
+        };
         let wanted: Vec<(String, PathBuf, crate::ide::IdeState, f32)> = ws
             .layout_tree
             .as_ref()
@@ -969,6 +1091,8 @@ impl AppView {
                     }
                 }
                 crate::ide::IdeEvent::Cursor => cx.notify(),
+                crate::ide::IdeEvent::Sftp { push, paths, root } => this.ide_sftp(&pid, *push, paths.clone(), root.clone(), cx),
+                crate::ide::IdeEvent::SftpCancel => this.ide_sftp_cancel(&pid),
             });
             self.ide_panes.insert(id, (pane, sub));
         }
@@ -976,7 +1100,9 @@ impl AppView {
 
     /// SQL panes of the active workspace that have no live view yet.
     fn ensure_sql_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active() else { return };
+        let Some(ws) = self.state.active() else {
+            return;
+        };
         let wanted: Vec<(String, Option<serde_json::Value>)> = ws
             .layout_tree
             .as_ref()
@@ -1032,8 +1158,12 @@ impl AppView {
         }
         let answer = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open folder".into()) });
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(paths))) = answer.await else { return };
-            let Some(dir) = paths.into_iter().next() else { return };
+            let Ok(Ok(Some(paths))) = answer.await else {
+                return;
+            };
+            let Some(dir) = paths.into_iter().next() else {
+                return;
+            };
             let _ = this.update(cx, |this, cx| {
                 let root = dir.to_string_lossy().into_owned();
                 if let Some(ws) = this.state.active_mut() {
@@ -1046,8 +1176,12 @@ impl AppView {
     }
 
     fn set_ide_root(&mut self, id: &str, root: String, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active_mut() else { return };
-        let Some(c) = ws.container_mut(id) else { return };
+        let Some(ws) = self.state.active_mut() else {
+            return;
+        };
+        let Some(c) = ws.container_mut(id) else {
+            return;
+        };
         let label = std::path::Path::new(&root).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "IDE".into());
         c.content = ContainerContent { kind: ContentType::Ide, label: Some(label), ..ContainerContent::empty() };
         c.content.set_extra_str("rootPath", Some(root));
@@ -1057,7 +1191,9 @@ impl AppView {
 
     fn on_sftp_event(&mut self, id: &str, ev: &crate::sftp_pane::SftpEvent, cx: &mut Context<Self>) {
         use crate::sftp_pane::SftpEvent;
-        let Some(c) = self.state.workspaces.iter_mut().find_map(|w| w.container_mut(id)) else { return };
+        let Some(c) = self.state.workspaces.iter_mut().find_map(|w| w.container_mut(id)) else {
+            return;
+        };
         match ev {
             SftpEvent::Paths { remote, local } => {
                 c.content.set_extra_str("sftpRemotePath", Some(remote.clone()));
@@ -1076,7 +1212,9 @@ impl AppView {
     /// The SFTP pane's picker chose a connection: it starts at that server's home.
     pub(crate) fn choose_sftp(&mut self, container_id: &str, connection_id: &str, cx: &mut Context<Self>) {
         let label = self.connections.lock().unwrap().get(connection_id).map(|c| c.label.clone());
-        let Some(ws) = self.state.active_mut() else { return };
+        let Some(ws) = self.state.active_mut() else {
+            return;
+        };
         ws.record_connection_use(connection_id);
         if let Some(c) = ws.container_mut(container_id) {
             c.content.set_extra_str("sftpConnectionId", Some(connection_id.to_owned()));
@@ -1099,6 +1237,7 @@ impl AppView {
             TerminalEvent::Exited => this.close_pane(&pane_id, cx),
             TerminalEvent::TitleChanged => cx.notify(),
             TerminalEvent::Remote(status) => this.on_remote_status(&pane_id, status.clone(), cx),
+            TerminalEvent::Command(command) => this.record_recent_command(command, cx),
         });
         self.panes.insert(id, Pane { view, process: None, _subscription: subscription });
     }
@@ -1140,7 +1279,9 @@ impl AppView {
     /// "Connect over SSH": open the session in the picker's container; it becomes
     /// an SSH terminal once the shell is ready.
     pub(crate) fn connect_saved(&mut self, container_id: String, connection_id: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(conn) = self.connections.lock().unwrap().get(&connection_id).cloned() else { return };
+        let Some(conn) = self.connections.lock().unwrap().get(&connection_id).cloned() else {
+            return;
+        };
         self.ssh_errors.remove(&container_id);
         let spawned = TerminalView::connect_ssh(self.ssh_params(&conn), self.host_key_checker_for(&conn));
         let zoom = self.state.active().and_then(|w| w.zoom(&container_id));
@@ -1212,9 +1353,13 @@ impl AppView {
 
     /// Fill an empty container: a local shell, or the SSH picker.
     pub(crate) fn fill_container(&mut self, id: &str, kind: ContentType, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active_mut() else { return };
+        let Some(ws) = self.state.active_mut() else {
+            return;
+        };
         let cwd = ws.working_directory.clone();
-        let Some(c) = ws.container_mut(id) else { return };
+        let Some(c) = ws.container_mut(id) else {
+            return;
+        };
         c.content = match kind {
             ContentType::Terminal => ContainerContent::local_terminal(cwd),
             ContentType::SshConnect => ContainerContent { kind: ContentType::SshConnect, label: Some("SSH".into()), ..ContainerContent::empty() },
@@ -1280,7 +1425,9 @@ impl AppView {
     }
 
     fn focus_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.state.active().and_then(|w| w.focused_container_id.clone()) else { return };
+        let Some(id) = self.state.active().and_then(|w| w.focused_container_id.clone()) else {
+            return;
+        };
         if let Some(pane) = self.panes.get(&id) {
             let handle = pane.view.read(cx).focus_handle().clone();
             window.defer(cx, move |window, cx| handle.focus(window, cx));
@@ -1291,7 +1438,9 @@ impl AppView {
     }
 
     pub(crate) fn split(&mut self, direction: Direction, target: Option<String>, cx: &mut Context<Self>) {
-        let Some(ws) = self.state.active_mut() else { return };
+        let Some(ws) = self.state.active_mut() else {
+            return;
+        };
         ws.split(target.as_deref(), direction);
         self.focus_mode = None;
         self.focus_pending = true;
@@ -1309,6 +1458,8 @@ impl AppView {
         self.sql_panes.remove(id);
         self.drop_browser_pane(id, cx);
         self.panes.remove(id);
+        // A persistent terminal's session ends with its pane (dropping the view only detaches).
+        crate::ptyd::end_session(id);
         self.attention.forget(id);
         crate::agent::notify::withdraw([id]);
         self.sftp_panes.remove(id);
@@ -1336,7 +1487,9 @@ impl AppView {
     }
 
     fn zoom_focused(&mut self, step: Option<f32>, cx: &mut Context<Self>) {
-        let Some(id) = self.state.active().and_then(|w| w.focused_container_id.clone()) else { return };
+        let Some(id) = self.state.active().and_then(|w| w.focused_container_id.clone()) else {
+            return;
+        };
         let applied = if let Some(pane) = self.panes.get(&id) {
             let current = pane.view.read(cx).font_size();
             let next = step.map_or(crate::theme::fonts().terminal_size, |s| current + s);
@@ -1451,12 +1604,10 @@ impl AppView {
                 cx.notify();
             }
             Some(Drag::Split { path, horizontal }) => {
-                let Some(b) = self.split_bounds.borrow().get(path).copied() else { return };
-                let (pos, start, len) = if *horizontal {
-                    (ev.position.x, b.left(), b.size.width)
-                } else {
-                    (ev.position.y, b.top(), b.size.height)
+                let Some(b) = self.split_bounds.borrow().get(path).copied() else {
+                    return;
                 };
+                let (pos, start, len) = if *horizontal { (ev.position.x, b.left(), b.size.width) } else { (ev.position.y, b.top(), b.size.height) };
                 if len <= px(0.) {
                     return;
                 }
@@ -1549,10 +1700,11 @@ fn load_state(store: &Store, env: &str) -> WorkspaceState {
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_panes(window, cx);
+        self.ensure_proc_poll(cx);
         if self.settings_tab == Some(crate::settings::SettingsTab::General) {
             self.ensure_appearance_controls(window, cx);
         }
-        if self.focus_pending && self.renaming.is_none() && self.popover.is_none() && self.editor.is_none() && self.settings_tab.is_none() {
+        if self.focus_pending && self.renaming.is_none() && self.popover.is_none() && self.editor.is_none() && self.settings_tab.is_none() && self.sync_settings.is_none() && !self.procs.overlay_open() {
             self.focus_pending = false;
             self.focus_active_pane(window, cx);
         }
@@ -1574,8 +1726,10 @@ impl Render for AppView {
         let picker = self.env_picker_open.then(|| self.render_env_picker(window, cx));
         let settings = self.render_settings(window, cx);
         let editor = self.render_editor(window, cx);
+        let sync_settings = self.render_sync_settings(window, cx);
         let dragging = matches!(self.drag, Some(Drag::Split { .. } | Drag::Sidebar | Drag::Pane { active: true, .. }));
         let pane_drag = self.render_pane_drag(cx);
+        let procs_overlay = self.render_procs_overlay(window, cx);
 
         div()
             .size_full()
@@ -1613,10 +1767,7 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &UiZoomOut, window, cx| this.pane_or_ui_zoom(Some(-1.), window, cx)))
             .on_action(cx.listener(|this, _: &UiZoomReset, window, cx| this.pane_or_ui_zoom(None, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(crate::settings::SettingsTab::Ssh, cx)))
-            .on_action(cx.listener(|this, _: &Quit, _, cx| {
-                this.flush();
-                cx.quit();
-            }))
+            .on_action(cx.listener(|this, _: &Quit, window, cx| this.confirm_quit(window, cx)))
             .children(title)
             .child(div().flex_1().min_h_0().flex().child(sidebar).child(grid))
             .child(status)
@@ -1624,6 +1775,8 @@ impl Render for AppView {
             .children(picker)
             .children(settings)
             .children(editor)
+            .children(sync_settings)
             .children(pane_drag)
+            .children(procs_overlay)
     }
 }

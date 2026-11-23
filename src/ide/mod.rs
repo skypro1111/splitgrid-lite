@@ -6,6 +6,7 @@
 //! they have unsaved edits.
 
 pub mod comment;
+mod duplicate;
 pub mod files;
 pub mod tree;
 
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use gpui_kit::component::Sizable as _;
-use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState};
+use gpui_kit::component::input::{Editor, EditorState, Input, InputEvent, InputState, Rope};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 // Zoom-aware: scales with the whole-window UI zoom (crate::ui).
@@ -24,7 +25,7 @@ use crate::assets::icon;
 use crate::theme::*;
 use tree::FileTree;
 
-actions!(ide, [SaveFile, CloseTab, ToggleExplorer, ToggleComment]);
+actions!(ide, [SaveFile, CloseTab, ToggleExplorer, ToggleComment, Duplicate]);
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -34,12 +35,33 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-b", ToggleExplorer, Some("Ide")),
         KeyBinding::new("cmd-/", ToggleComment, Some("Ide")),
         KeyBinding::new("cmd-/", ToggleComment, Some("RemoteEditor")),
+        // In the editor only (elsewhere ⌘⇧D splits the pane down).
+        KeyBinding::new("cmd-shift-d", Duplicate, Some("Ide > Input")),
+        KeyBinding::new("cmd-shift-d", Duplicate, Some("RemoteEditor > Input")),
     ]);
+}
+
+/// ⌘⇧D in an editor: duplicate the selection, or the caret's line (undoable, one step).
+pub fn duplicate(editor: &Entity<EditorState>, window: &mut Window, cx: &mut App) {
+    let edit = {
+        let e = editor.read(cx);
+        if !e.focus_handle(cx).is_focused(window) {
+            return;
+        }
+        duplicate::duplicate(&e.value(), e.selected_range())
+    };
+    editor.update(cx, |e, cx| {
+        e.set_selected_range(edit.range.clone(), cx);
+        e.replace(edit.text, window, cx);
+        e.set_selected_range(edit.selection, cx);
+    });
 }
 
 /// ⌘/ in an editor: comment or uncomment the selected lines (undoable, one step).
 pub fn toggle_comment(editor: &Entity<EditorState>, path: &Path, window: &mut Window, cx: &mut App) {
-    let Some(syntax) = comment::syntax(files::language(path).0) else { return };
+    let Some(syntax) = comment::syntax(files::language(path).0) else {
+        return;
+    };
     let (text, sel) = {
         let e = editor.read(cx);
         (e.value().to_string(), e.selected_range())
@@ -56,6 +78,48 @@ const SIDEBAR_DEFAULT: f32 = 240.;
 const SIDEBAR_MIN: f32 = 160.;
 const SIDEBAR_MAX: f32 = 500.;
 const MAX_FILE: u64 = 50 * 1024 * 1024;
+/// Larger files are read and measured off the UI thread (Sublime's async load).
+const ASYNC_LOAD: u64 = 512 * 1024;
+/// Larger files, or ones with a longer line, open without soft wrap: wrapping
+/// measures every line of the document on the UI thread.
+const NO_WRAP_BYTES: usize = 2 * 1024 * 1024;
+const NO_WRAP_LINE: usize = 4_000;
+/// Larger files open as plain text (no tree-sitter tree of tens of MB).
+const PLAIN_BYTES: usize = 16 * 1024 * 1024;
+/// A longer line can't be laid out per keystroke without stalling: read-only.
+const READONLY_LINE: usize = 100_000;
+
+/// A file read from disk with how the editor should take it.
+struct Loaded {
+    text: String,
+    wrap: bool,
+    plain: bool,
+    /// Why it opens read-only.
+    readonly: Option<String>,
+}
+
+fn load(path: &Path) -> Result<Loaded, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let text = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    };
+    let longest = text.split('\n').map(str::len).max().unwrap_or(0);
+    let readonly = (longest > READONLY_LINE).then(|| format!("Read-only: a line is {} characters long, too long to edit here.", group_digits(longest)));
+    Ok(Loaded { wrap: text.len() <= NO_WRAP_BYTES && longest <= NO_WRAP_LINE, plain: text.len() > PLAIN_BYTES, readonly, text })
+}
+
+fn group_digits(n: usize) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(' ');
+        }
+        out.push(c);
+    }
+    out
+}
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
 pub const EDITOR_FONT: &str = "JetBrains Mono";
 
@@ -121,7 +185,14 @@ pub enum IdeEvent {
     State(IdeState),
     /// The active file or cursor moved: the status bar shows it.
     Cursor,
+    /// The tree's "SFTP Push" / "SFTP Pull" on these paths (the workspace's sync).
+    Sftp { push: bool, paths: Vec<PathBuf>, root: PathBuf },
+    /// Cancel the running push / pull.
+    SftpCancel,
 }
+
+/// A synced file's name in the tree (Electron's rgba(142, 214, 168, 0.95)).
+const SYNCED: u32 = 0x8ed6a8;
 
 impl EventEmitter<IdeEvent> for IdePane {}
 
@@ -130,8 +201,10 @@ struct Tab {
     preview: bool,
     editor: Entity<EditorState>,
     /// The text as last saved or loaded.
-    saved: String,
+    saved: Rope,
     dirty: bool,
+    /// Shown above the editor (why a large file is read-only).
+    notice: Option<String>,
     _sub: Subscription,
 }
 
@@ -161,8 +234,19 @@ pub struct IdePane {
     inline_input: Entity<InputState>,
     menu: Option<(Menu, Point<Pixels>)>,
     error: Option<String>,
+    /// A large file being read in the background: (path, preview, focus).
+    loading: Option<(PathBuf, bool, bool)>,
+    _load: Option<Task<()>>,
     /// Files the watcher saw change, reloaded on the next render.
     pending_reload: Vec<PathBuf>,
+    /// The workspace syncs over SFTP (the tree offers Push / Pull).
+    sync_on: bool,
+    /// Files whose last sync succeeded (shown green).
+    synced: std::rc::Rc<std::collections::HashSet<PathBuf>>,
+    /// The last push / pull: (text, is an error); `sftp_running` while one runs.
+    sftp_status: Option<(String, bool)>,
+    sftp_running: bool,
+    _sftp_clear: Option<Task<()>>,
     /// The explorer's left edge last frame (for the resize drag).
     explorer_left: std::rc::Rc<std::cell::Cell<f32>>,
     _watcher: Option<notify::RecommendedWatcher>,
@@ -202,7 +286,14 @@ impl IdePane {
             inline_input,
             menu: None,
             error: None,
+            loading: None,
+            _load: None,
             pending_reload: Vec::new(),
+            sync_on: false,
+            synced: Default::default(),
+            sftp_status: None,
+            sftp_running: false,
+            _sftp_clear: None,
             explorer_left: Default::default(),
             _watcher: None,
             _subs: subs,
@@ -247,8 +338,9 @@ impl IdePane {
     }
 
     /// A context menu is open (it may spill over a browser pane's web view).
-    pub(crate) fn has_menu(&self) -> bool {
-        self.menu.is_some()
+    /// The open context menu, for the browser panes it may cover.
+    pub(crate) fn menu_cover(&self) -> Option<crate::overlay::Cover> {
+        self.menu.as_ref().map(|(_, at)| crate::overlay::Cover::menu(*at))
     }
 
     pub fn font_size(&self) -> f32 {
@@ -257,7 +349,9 @@ impl IdePane {
 
     /// "main.rs · Rust · Ln 3, Col 14" for the status bar, or "IDE".
     pub fn status(&self, cx: &App) -> String {
-        let Some(tab) = self.active.and_then(|i| self.tabs.get(i)) else { return "IDE".into() };
+        let Some(tab) = self.active.and_then(|i| self.tabs.get(i)) else {
+            return "IDE".into();
+        };
         let name = tab.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let lang = files::language(&tab.path).1;
         let pos = tab.editor.read(cx).cursor_position();
@@ -281,28 +375,64 @@ impl IdePane {
             self.changed(cx);
             return;
         }
-        let text = match std::fs::metadata(&path) {
+        let size = match std::fs::metadata(&path) {
             Ok(m) if m.len() > MAX_FILE => {
                 self.error = Some(format!("File too large ({}MB). Maximum is 50MB.", m.len() / (1024 * 1024)));
                 cx.notify();
                 return;
             }
-            _ => match std::fs::read(&path) {
-                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
-                Err(e) => {
-                    log::error!("open {}: {e}", path.display());
-                    return;
-                }
-            },
+            Ok(m) => m.len(),
+            Err(_) => 0,
         };
-        let lang = files::language(&path).0;
-        let editor = cx.new(|cx| EditorState::new(window, cx).language(lang).default_value(text.clone()));
+        if size > ASYNC_LOAD {
+            // Read, decode and measure it off the UI thread; the pane stays live.
+            if self.loading.as_ref().is_some_and(|(p, ..)| *p == path) {
+                return;
+            }
+            self.loading = Some((path.clone(), preview, focus));
+            let bg = path.clone();
+            self._load = Some(cx.spawn_in(window, async move |this, cx| {
+                let loaded = cx.background_executor().spawn(async move { load(&bg) }).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    let Some((path, preview, focus)) = this.loading.take() else {
+                        return;
+                    };
+                    match loaded {
+                        Ok(l) => this.add_tab(path, l, preview, focus, window, cx),
+                        Err(e) => {
+                            this.error = Some(format!("Failed to open {}: {e}", path.display()));
+                            cx.notify();
+                        }
+                    }
+                });
+            }));
+            cx.notify();
+            return;
+        }
+        match load(&path) {
+            Ok(l) => self.add_tab(path, l, preview, focus, window, cx),
+            Err(e) => log::error!("open {}: {e}", path.display()),
+        }
+    }
+
+    fn add_tab(&mut self, path: PathBuf, loaded: Loaded, preview: bool, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Loaded { text, wrap, plain, readonly } = loaded;
+        let lang = if plain { "text" } else { files::language(&path).0 };
+        let saved = Rope::from(text.as_str());
+        let editor = cx.new(|cx| {
+            let mut e = EditorState::new(window, cx).language(lang).soft_wrap(wrap).default_value(text);
+            if readonly.is_some() {
+                e.set_readonly(true, cx);
+            }
+            e
+        });
         let tab_path = path.clone();
         let sub = cx.subscribe_in(&editor, window, move |this, ed, ev: &InputEvent, _, cx| {
             if matches!(ev, InputEvent::Change) {
-                let value = ed.read(cx).value();
+                let text = ed.read(cx).text();
                 if let Some(t) = this.tabs.iter_mut().find(|t| t.path == tab_path) {
-                    t.dirty = value.as_ref() != t.saved;
+                    // No copy of the text per keystroke: length first, then the ropes.
+                    t.dirty = text.len() != t.saved.len() || *text != t.saved;
                     // Editing pins a preview tab.
                     t.preview = false;
                 }
@@ -310,7 +440,7 @@ impl IdePane {
             }
             cx.emit(IdeEvent::Cursor);
         });
-        let tab = Tab { path, preview, editor: editor.clone(), saved: text, dirty: false, _sub: sub };
+        let tab = Tab { path, preview, editor: editor.clone(), saved, dirty: false, notice: readonly, _sub: sub };
         match self.tabs.iter().position(|t| t.preview).filter(|_| preview) {
             Some(i) => {
                 self.tabs[i] = tab;
@@ -328,11 +458,13 @@ impl IdePane {
     }
 
     fn save(&mut self, ix: usize, cx: &mut Context<Self>) -> bool {
-        let Some(tab) = self.tabs.get_mut(ix) else { return false };
+        let Some(tab) = self.tabs.get_mut(ix) else {
+            return false;
+        };
         let text = tab.editor.read(cx).value().to_string();
         match std::fs::write(&tab.path, &text) {
             Ok(()) => {
-                tab.saved = text;
+                tab.saved = Rope::from(text.as_str());
                 tab.dirty = false;
                 self.error = None;
                 cx.notify();
@@ -375,8 +507,8 @@ impl IdePane {
         for t in self.tabs.iter_mut().filter(|t| !t.dirty && paths.contains(&t.path)) {
             if let Ok(bytes) = std::fs::read(&t.path) {
                 let text = String::from_utf8_lossy(&bytes).into_owned();
-                if text != t.saved {
-                    t.saved = text.clone();
+                if t.saved != text.as_str() {
+                    t.saved = Rope::from(text.as_str());
                     t.editor.update(cx, |e, cx| e.set_value(text, window, cx));
                 }
             }
@@ -552,7 +684,9 @@ impl IdePane {
     }
 
     fn commit_inline(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(what) = self.inline.take() else { return };
+        let Some(what) = self.inline.take() else {
+            return;
+        };
         cx.notify();
         if name.is_empty() {
             return;
@@ -609,6 +743,53 @@ impl IdePane {
         self.changed(cx);
     }
 
+    // ── SFTP sync (driven by the app, which owns the workspace's sync) ──────
+
+    pub(crate) fn set_sync(&mut self, on: bool, synced: std::rc::Rc<std::collections::HashSet<PathBuf>>) {
+        self.sync_on = on;
+        self.synced = synced;
+    }
+
+    pub(crate) fn set_sftp_running(&mut self, text: String, cx: &mut Context<Self>) {
+        self.sftp_running = true;
+        self.sftp_status = Some((text, false));
+        self._sftp_clear = None;
+        cx.notify();
+    }
+
+    /// A finished push / pull: a success fades after a few seconds, an error stays
+    /// until clicked.
+    pub(crate) fn set_sftp_status(&mut self, status: Option<(String, bool)>, cx: &mut Context<Self>) {
+        self.sftp_running = false;
+        let fades = status.as_ref().is_some_and(|(_, err)| !err);
+        self.sftp_status = status;
+        self._sftp_clear = fades.then(|| {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(3)).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.sftp_status = None;
+                    cx.notify();
+                });
+            })
+        });
+        cx.notify();
+    }
+
+    /// After a pull: show what arrived (open files reload through the watcher).
+    pub(crate) fn refresh_after_pull(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        for p in paths {
+            let dir = if p.is_dir() { p.clone() } else { p.parent().map(Path::to_path_buf).unwrap_or_default() };
+            self.tree.refresh(&dir);
+        }
+        cx.notify();
+    }
+
+    fn sftp(&mut self, push: bool, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.menu = None;
+        cx.emit(IdeEvent::Sftp { push, paths, root: self.tree.root.clone() });
+        cx.notify();
+    }
+
     /// The paths a tree menu acts on: the selection when the clicked row is in it.
     fn targets(&self, clicked: &Path) -> Vec<PathBuf> {
         if self.tree.selected.contains(clicked) && self.tree.selected.len() > 1 {
@@ -663,6 +844,11 @@ impl Render for IdePane {
                 if let Some(t) = this.active.and_then(|i| this.tabs.get(i)) {
                     let (ed, path) = (t.editor.clone(), t.path.clone());
                     toggle_comment(&ed, &path, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &Duplicate, window, cx| {
+                if let Some(t) = this.active.and_then(|i| this.tabs.get(i)) {
+                    duplicate(&t.editor.clone(), window, cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleExplorer, _, cx| {
@@ -809,7 +995,14 @@ impl IdePane {
                         }),
                     )
                     .child(icon_el)
-                    .map(|d| if renaming { d.child(inline_field()) } else { d.child(div().min_w_0().truncate().child(node.name.clone())) })
+                    .map(|d| {
+                        if renaming {
+                            d.child(inline_field())
+                        } else {
+                            let synced = !is_dir && self.synced.contains(&node.path);
+                            d.child(div().min_w_0().truncate().when(synced, |d| d.text_color(hexa(SYNCED, 0.95))).child(node.name.clone()))
+                        }
+                    })
                     .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| this.click_node(p_click.clone(), is_dir, ev, window, cx)))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |this, ev: &MouseDownEvent, window, cx| {
                         cx.stop_propagation();
@@ -963,6 +1156,44 @@ impl IdePane {
             .when_some(self.error.clone(), |d, e| {
                 d.child(div().px(px(10.)).py(px(5.)).bg(hexa(0xf14c4c, 0.12)).text_size(px(11.)).text_color(ACCENT_RED).child(e))
             })
+            .when_some(self.sftp_status.clone(), |d, (text, err)| {
+                let running = self.sftp_running;
+                d.child(
+                    div()
+                        .id("ide-sftp-status")
+                        .px(px(10.))
+                        .py(px(5.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .bg(if err { hexa(0xf14c4c, 0.12) } else { bg_hover() })
+                        .text_size(px(11.))
+                        .text_color(if err { ACCENT_RED } else { TEXT_MUTED })
+                        .child(div().flex_1().min_w_0().truncate().child(text))
+                        .child(
+                            div()
+                                .id("ide-sftp-action")
+                                .cursor_pointer()
+                                .text_color(TEXT_PRIMARY)
+                                .hover(|d| d.underline())
+                                .child(if running { "Cancel" } else { "Dismiss" })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if running {
+                                        cx.emit(IdeEvent::SftpCancel);
+                                    } else {
+                                        this.sftp_status = None;
+                                        cx.notify();
+                                    }
+                                })),
+                        ),
+                )
+            })
+            .when_some(self.loading.as_ref().map(|(p, ..)| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()), |d, name| {
+                d.child(div().px(px(10.)).py(px(5.)).bg(bg_hover()).text_size(px(11.)).text_color(TEXT_MUTED).child(format!("Opening {name}…")))
+            })
+            .when_some(self.active.and_then(|i| self.tabs.get(i)).and_then(|t| t.notice.clone()), |d, n| {
+                d.child(div().px(px(10.)).py(px(5.)).bg(hexa(0xe5c07b, 0.10)).text_size(px(11.)).text_color(TEXT_MUTED).child(n))
+            })
             .child(div().flex_1().min_h_0().bg(editor_bg()).pt(px(8.)).child(body))
             .into_any_element()
     }
@@ -1013,7 +1244,24 @@ impl IdePane {
                 items.push(sep().into_any_element());
                 let del = targets.clone();
                 let label = if multi { format!("Delete {} Items", targets.len()) } else { "Delete".into() };
-                items.push(item("m-delete".into(), label, None, true).on_click(cx.listener(move |this, _, _, cx| this.delete(del.clone(), cx))).into_any_element());
+                items.push(
+                    item("m-delete".into(), label, None, true).on_click(cx.listener(move |this, _, _, cx| this.delete(del.clone(), cx))).into_any_element(),
+                );
+                if self.sync_on {
+                    items.push(sep().into_any_element());
+                    let n = if multi { format!(" ({})", targets.len()) } else { String::new() };
+                    let (a, b) = (targets.clone(), targets.clone());
+                    items.push(
+                        item("m-push".into(), format!("SFTP Push{n}"), None, false)
+                            .on_click(cx.listener(move |this, _, _, cx| this.sftp(true, a.clone(), cx)))
+                            .into_any_element(),
+                    );
+                    items.push(
+                        item("m-pull".into(), format!("SFTP Pull{n}"), None, false)
+                            .on_click(cx.listener(move |this, _, _, cx| this.sftp(false, b.clone(), cx)))
+                            .into_any_element(),
+                    );
+                }
                 items.push(sep().into_any_element());
                 let dir = if is_dir { clicked.clone() } else { clicked.parent().map(Path::to_path_buf).unwrap_or_default() };
                 items.push(item("m-refresh".into(), "Refresh".into(), None, false).on_click(cx.listener(move |this, _, _, cx| {
@@ -1052,6 +1300,7 @@ impl IdePane {
             anchored().position(at).snap_to_window_with_margin(px(4.)).child(
                 div()
                     .id("ide-menu")
+                    .child(crate::overlay::recorder(at, 0))
                     .min_w(px(200.))
                     .py(px(4.))
                     .flex()
@@ -1071,5 +1320,39 @@ impl IdePane {
         )
         .with_priority(1)
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::{Loaded, NO_WRAP_BYTES, NO_WRAP_LINE, READONLY_LINE, load};
+
+    fn loaded(text: &str) -> Loaded {
+        let dir = std::env::temp_dir().join(format!("sg-ide-load-{}-{}", std::process::id(), text.len()));
+        std::fs::write(&dir, text).unwrap();
+        let l = load(&dir).unwrap();
+        let _ = std::fs::remove_file(&dir);
+        l
+    }
+
+    #[test]
+    fn small_files_wrap_and_edit() {
+        let l = loaded("fn main() {}\n");
+        assert!(l.wrap && !l.plain && l.readonly.is_none());
+    }
+
+    #[test]
+    fn long_lines_turn_wrap_off_then_read_only() {
+        let l = loaded(&"x".repeat(NO_WRAP_LINE + 1));
+        assert!(!l.wrap && l.readonly.is_none());
+        let l = loaded(&"x".repeat(READONLY_LINE + 1));
+        assert!(!l.wrap);
+        assert_eq!(l.readonly.as_deref(), Some("Read-only: a line is 100 001 characters long, too long to edit here."));
+    }
+
+    #[test]
+    fn many_short_lines_past_the_size_turn_wrap_off() {
+        let l = loaded(&"short line\n".repeat(NO_WRAP_BYTES / 11 + 1));
+        assert!(!l.wrap && l.readonly.is_none() && !l.plain);
     }
 }

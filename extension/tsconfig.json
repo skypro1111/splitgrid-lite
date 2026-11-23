@@ -1,0 +1,24 @@
+{
+  // Standalone: compiles for a Chrome MV3 bundle (the protocol is vendored in
+  // src/ext-protocol.ts). `npm run typecheck` in this directory.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Only the Chrome APIs — pulling in @types/node here would let a service
+    // worker file reference Node globals that do not exist at runtime.
+    "types": ["chrome"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "splitgrid-lite-browser-control",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.2.5",
+    "esbuild": "^0.25.0",
+    "typescript": "~5.9.3"
+  }
+}
