@@ -147,6 +147,28 @@ impl LayoutNode {
         }
     }
 
+    pub fn last_leaf_id(&self) -> &str {
+        match self {
+            LayoutNode::Leaf(l) => &l.container_id,
+            LayoutNode::Split(s) => s.second.last_leaf_id(),
+        }
+    }
+
+    /// The pane that takes over `target`'s space when it leaves the tree: its
+    /// sibling, or (when that is a split) the sibling's pane next to it.
+    /// None when `target` is the root or isn't in the tree.
+    pub fn absorber(&self, target: &str) -> Option<String> {
+        let LayoutNode::Split(s) = self else { return None };
+        let is = |n: &LayoutNode| matches!(n, LayoutNode::Leaf(l) if l.container_id == target);
+        if is(&s.first) {
+            return Some(s.second.first_leaf_id().to_owned());
+        }
+        if is(&s.second) {
+            return Some(s.first.last_leaf_id().to_owned());
+        }
+        s.first.absorber(target).or_else(|| s.second.absorber(target))
+    }
+
     /// The node at a path from the root.
     pub fn at(&self, path: &[bool]) -> Option<&LayoutNode> {
         match path.split_first() {
@@ -286,6 +308,23 @@ mod tests {
         assert_eq!(back["second"]["zone"]["name"], "main");
         assert!(back["first"].get("zone").is_none() && back["first"].get("zoneTray").is_none(), "absent marks stay absent");
         assert_eq!(back["direction"], "horizontal");
+    }
+
+    #[test]
+    fn absorber_is_the_neighbour_that_grows() {
+        let mut t = LayoutNode::leaf("a");
+        t.split_leaf("a", "b", Direction::Horizontal);
+        assert_eq!(t.absorber("a").as_deref(), Some("b"));
+        assert_eq!(t.absorber("b").as_deref(), Some("a"));
+        // a | (b / c): a's neighbour in b/c is b; c's is b.
+        t.split_leaf("b", "c", Direction::Vertical);
+        assert_eq!(t.absorber("a").as_deref(), Some("b"));
+        assert_eq!(t.absorber("c").as_deref(), Some("b"));
+        // (x | y) | z: z's neighbour is y.
+        let t = LayoutNode::split(Direction::Horizontal, 0.5, LayoutNode::split(Direction::Horizontal, 0.5, LayoutNode::leaf("x"), LayoutNode::leaf("y")), LayoutNode::leaf("z"));
+        assert_eq!(t.absorber("z").as_deref(), Some("y"));
+        assert_eq!(LayoutNode::leaf("a").absorber("a"), None);
+        assert_eq!(t.absorber("nope"), None);
     }
 
     #[test]

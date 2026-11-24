@@ -347,8 +347,11 @@ impl Workspace {
     pub fn normalize(&mut self) {
         let ids: Vec<String> = self.containers.iter().map(|c| c.id.clone()).collect();
         self.layout_tree = self.layout_tree.take().and_then(|t| t.prune(&|id| ids.iter().any(|c| c == id)));
-        let leaves = self.layout_tree.as_ref().map(|t| t.leaf_ids()).unwrap_or_default();
-        self.containers.retain(|c| leaves.contains(&c.id));
+        let leaves = self.leaves();
+        // Collapsed panes have no leaf but are kept (model::collapse).
+        self.containers.retain(|c| leaves.contains(&c.id) || c.content.extra_str("collapsedInto").is_some());
+        self.rehome_collapsed(None);
+        let leaves = self.leaves();
         if self.focused_container_id.as_ref().is_none_or(|f| !leaves.contains(f)) {
             self.focused_container_id = leaves.first().cloned();
         }
@@ -375,12 +378,15 @@ impl Workspace {
 
     /// Close a pane; the focus moves to the first remaining one.
     pub fn close(&mut self, container_id: &str) {
+        // Panes collapsed into it move to the neighbour that takes its space.
+        let heir = self.layout_tree.as_ref().and_then(|t| t.absorber(container_id));
         self.layout_tree = self.layout_tree.take().and_then(|t| t.remove_leaf(container_id));
         self.containers.retain(|c| c.id != container_id);
         if let Some(map) = self.extra.get_mut("containerZooms").and_then(Value::as_object_mut) {
             map.remove(container_id);
         }
-        if self.focused_container_id.as_deref() == Some(container_id) {
+        self.rehome_collapsed(heir.as_deref());
+        if self.focused_container_id.as_deref().is_none_or(|f| f == container_id || !self.leaves().iter().any(|l| l == f)) {
             self.focused_container_id = self.layout_tree.as_ref().and_then(|t| t.leaf_ids().into_iter().next());
         }
         self.updated_at = now_ms();
