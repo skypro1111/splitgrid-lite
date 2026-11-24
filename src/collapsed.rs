@@ -25,8 +25,12 @@ const CLOSE_DELAY: Duration = Duration::from_millis(250);
 const REFRESH: Duration = Duration::from_millis(500);
 /// Chips shown in a header before "+N".
 const MAX_CHIPS: usize = 5;
-const PREVIEW_W: f32 = 560.;
-const PREVIEW_LINES: usize = 18;
+const PREVIEW_W: f32 = 640.;
+/// The terminal text's padding inside the preview, each side.
+const PREVIEW_PAD: f32 = 10.;
+/// Monospace advance and line height, per point of font size.
+const CHAR_W: f32 = 0.6;
+const LINE_H: f32 = 1.3;
 
 #[derive(Default)]
 pub(crate) struct CollapsedUi {
@@ -199,7 +203,7 @@ impl AppView {
 
     /// The open preview: the pane's name and folder, its last lines, and
     /// buttons to expand or close it.
-    pub(crate) fn render_collapsed_preview(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn render_collapsed_preview(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let id = self.collapsed_ui.preview.clone()?;
         let at = self.collapsed_ui.anchor()?;
         let ws = self.state.workspaces.iter().find(|w| w.is_collapsed(&id))?;
@@ -211,8 +215,15 @@ impl AppView {
             .or_else(|| ws.container(&id).and_then(|c| c.content.cwd.clone()))
             .map(|p| tilde(&p))
             .unwrap_or_default();
-        let lines = pane.map(|p| p.view.read(cx).tail_lines(PREVIEW_LINES)).unwrap_or_default();
+        // The whole screen, scaled down until its width and height fit (within
+        // 6–12pt): a preview of the pane, not just its last lines.
+        let (cols, lines) = pane.map(|p| p.view.read(cx).screen_rows()).unwrap_or_default();
         let empty = lines.is_empty();
+        let max_h = (f32::from(window.viewport_size().height) * 0.6).clamp(160., 560.);
+        let fit_w = (PREVIEW_W - 2. * PREVIEW_PAD) / (cols.max(20) as f32 * CHAR_W);
+        let fit_h = max_h / (lines.len().max(1) as f32 * LINE_H);
+        let font = fit_w.min(fit_h).clamp(6., 12.);
+        let line_h = font * LINE_H;
         let fonts = fonts();
         let (e_id, x_id) = (id.clone(), id.clone());
         let button = |key: &str, label: &'static str| {
@@ -276,17 +287,20 @@ impl AppView {
                         )
                         .child(
                             div()
-                                .px(px(10.))
+                                .px(px(PREVIEW_PAD))
                                 .py(px(8.))
+                                .max_h(px(max_h + 16.))
+                                .overflow_hidden()
                                 .flex()
                                 .flex_col()
+                                .justify_end()
                                 .bg(bg_primary())
                                 .font_family(fonts.terminal.clone())
-                                .text_size(px(11.))
-                                .line_height(px(15.))
+                                .text_size(px(font))
+                                .line_height(px(line_h))
                                 .text_color(TEXT_PRIMARY)
                                 .when(empty, |d| d.text_color(TEXT_MUTED).child("No output yet"))
-                                .children(lines.into_iter().map(|l| div().h(px(15.)).overflow_hidden().whitespace_nowrap().child(if l.is_empty() { " ".to_owned() } else { l }))),
+                                .children(lines.into_iter().map(|l| div().flex_none().h(px(line_h)).overflow_hidden().whitespace_nowrap().child(if l.is_empty() { " ".to_owned() } else { l }))),
                         ),
                 ),
             )

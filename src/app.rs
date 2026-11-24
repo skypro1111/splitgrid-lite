@@ -1784,7 +1784,7 @@ impl Render for AppView {
         let title = (!window.is_fullscreen()).then(|| self.render_title_strip(cx));
         let status = self.render_status_bar(cx);
         let popover = self.popover.clone().map(|p| self.render_popover(p, window, cx));
-        let collapsed_preview = self.render_collapsed_preview(cx);
+        let collapsed_preview = self.render_collapsed_preview(window, cx);
         let picker = self.env_picker_open.then(|| self.render_env_picker(window, cx));
         let settings = self.render_settings(window, cx);
         let editor = self.render_editor(window, cx);
