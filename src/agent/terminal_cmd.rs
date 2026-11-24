@@ -360,11 +360,13 @@ impl AppView {
             let tag = ZoneTag { terminal: owner.terminal.clone(), name: owner.name.clone(), label: zone_label };
             ws.add_collapsed(Container { id: id.clone(), content }, &parent, Some(&tag));
         } else {
+            let anchor = ws.collapsed_parent(terminal).unwrap_or_else(|| terminal.to_owned());
             let args = OpenArgs {
             owner,
             label: &zone_label,
             new_id: &id,
-            anchor_id: Some(terminal),
+            // This terminal, or (collapsed itself) the pane it is collapsed into.
+            anchor_id: Some(anchor.as_str()),
             at: flags.at.as_deref(),
             split,
             background: false,

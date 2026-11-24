@@ -1497,7 +1497,7 @@ impl AppView {
             _ => Direction::Horizontal,
         };
         if let Some(ws) = self.state.workspaces.iter_mut().find(|w| w.is_collapsed(id)) {
-            ws.expand(id, direction);
+            crate::agent::zones::expand_collapsed(ws, id, direction);
         }
         self.close_preview(cx);
         self.focus_mode = None;

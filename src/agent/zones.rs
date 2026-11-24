@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 
 use crate::model::layout::{Direction, LayoutNode, NodePath, ZoneTag};
+use crate::model::workspace::Workspace;
 
 pub const DEFAULT_ZONE: &str = "main";
 /// The share of a zone (or of the agent's terminal) left above its tray.
@@ -308,6 +309,25 @@ pub fn move_zone_pane(tree: Option<&LayoutNode>, container_id: &str, to_tray: bo
     next
 }
 
+/// Expand a collapsed pane (model::collapse) across `direction`. One that
+/// belongs to an agent's zone goes back into that zone (so the agent still
+/// owns it), started beside its parent when the zone is gone; any other one
+/// splits its parent. False when it isn't collapsed.
+pub fn expand_collapsed(ws: &mut Workspace, id: &str, direction: Direction) -> bool {
+    let Some(parent) = ws.collapsed_parent(id) else { return false };
+    if let Some(tag) = ws.collapsed_zone(id) {
+        let owner = ZoneOwner::new(&tag.terminal, Some(&tag.name));
+        let split = Some(if direction == Direction::Vertical { ZoneSplit::Down } else { ZoneSplit::Right });
+        let args = OpenArgs { owner: &owner, label: &tag.label, new_id: id, anchor_id: Some(&parent), at: None, split, background: false };
+        if let Ok(tree) = open_in_zone(ws.layout_tree.clone(), &args) {
+            ws.layout_tree = Some(tree);
+            ws.uncollapse(id);
+            return true;
+        }
+    }
+    ws.expand(id, direction)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,5 +404,31 @@ mod tests {
         assert_eq!(zone_layout(Some(&t), &owner()).main, ["a"]);
         assert_eq!(zone_of_pane(Some(&t), "a").unwrap().label, "Agent");
         assert!(zone_of_pane(Some(&t), "me").is_none());
+    }
+
+    #[test]
+    fn an_expanded_background_pane_stays_in_its_agents_zone() {
+        use crate::model::workspace::{Container, ContainerContent};
+        let mut ws = Workspace::new("W", None);
+        ws.containers = ["user", "me"].map(|id| Container { id: id.into(), content: ContainerContent::local_terminal(None) }).to_vec();
+        ws.layout_tree = Some(LayoutNode::split(Direction::Horizontal, 0.5, LayoutNode::leaf("user"), LayoutNode::leaf("me")));
+        let tag = ZoneTag { terminal: "me".into(), name: DEFAULT_ZONE.into(), label: "Agent".into() };
+        let bg = Container { id: "bg".into(), content: ContainerContent::local_terminal(None) };
+        // `open --background`: collapsed into the agent's terminal, which is outside its zone.
+        assert!(ws.add_collapsed(bg, "me", Some(&tag)));
+        assert!(expand_collapsed(&mut ws, "bg", Direction::Vertical));
+        assert!(!ws.is_collapsed("bg"));
+        assert_eq!(zone_pane_ids(ws.layout_tree.as_ref(), &owner()), ["bg"], "the agent still owns it");
+        assert_eq!(ws.focused_container_id.as_deref(), Some("bg"));
+        // Collapsed again from its zone and expanded: back in the same zone.
+        let zone = zone_of_pane(ws.layout_tree.as_ref(), "bg");
+        assert!(ws.collapse("bg", zone.as_ref()).is_some());
+        assert!(expand_collapsed(&mut ws, "bg", Direction::Horizontal));
+        assert_eq!(zone_pane_ids(ws.layout_tree.as_ref(), &owner()), ["bg"]);
+        // A pane of no zone just splits its parent.
+        assert!(ws.collapse("user", None).is_some());
+        assert!(expand_collapsed(&mut ws, "user", Direction::Horizontal));
+        assert!(ws.leaves().contains(&"user".to_owned()));
+        assert!(!expand_collapsed(&mut ws, "user", Direction::Horizontal), "not collapsed");
     }
 }

@@ -114,6 +114,14 @@ impl Workspace {
         true
     }
 
+    /// Forget that a pane is collapsed, once the caller has put it back in the
+    /// layout itself (into its agent zone, agent::zones); it takes the focus.
+    pub fn uncollapse(&mut self, id: &str) {
+        self.unmark(id);
+        self.focused_container_id = Some(id.to_owned());
+        self.updated_at = now_ms();
+    }
+
     /// Put a collapsed pane back: it splits its parent (`direction`) and takes
     /// the second half. False when it isn't collapsed.
     pub fn expand(&mut self, id: &str, direction: Direction) -> bool {
