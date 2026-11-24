@@ -69,11 +69,11 @@ sg-history = { path = "crates/sg-history" }
 # Persistent terminals (src/ptyd.rs): the splitgrid-ptyd protocol and client.
 sg-ptyd = { path = "crates/sg-ptyd" }
 
-# Dependencies optimised even in debug: an unoptimised VT parser/renderer makes
-# any performance judgement of the spike meaningless.
 [dev-dependencies]
 tempfile = "3"
 
+# Dependencies optimised even in debug: an unoptimised VT parser/renderer makes
+# any performance judgement meaningless.
 [profile.dev.package."*"]
 opt-level = 3
 
