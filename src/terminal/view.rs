@@ -286,6 +286,41 @@ impl TerminalView {
         (term.columns(), term.screen_lines())
     }
 
+    /// The last `n` non-blank-trailing lines (a collapsed pane's preview), reading
+    /// only the bottom of the buffer, not all of its history.
+    pub fn tail_lines(&self, n: usize) -> Vec<String> {
+        let term = self.terminal.term.lock();
+        let grid = term.grid();
+        let cols = grid.columns();
+        let bottom = grid.screen_lines() as i32;
+        let top = (bottom - 4 * n as i32 - 1).max(-(grid.history_size() as i32));
+        let mut lines: Vec<String> = Vec::new();
+        let mut joined = false;
+        for line in top..bottom {
+            let row = &grid[Line(line)];
+            let mut text = String::with_capacity(cols);
+            for col in 0..cols {
+                let cell = &row[Column(col)];
+                if !cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    text.push(cell.c);
+                }
+            }
+            match lines.last_mut() {
+                Some(last) if joined => last.push_str(&text),
+                _ => lines.push(text),
+            }
+            joined = cols > 0 && row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
+        }
+        for l in &mut lines {
+            l.truncate(l.trim_end().len());
+        }
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+        let skip = lines.len().saturating_sub(n);
+        lines.split_off(skip)
+    }
+
     /// Scrollback and screen as plain text: wrapped rows joined, trailing
     /// blanks trimmed (what an agent reads with `sg-terminal read`).
     pub fn text(&self) -> String {

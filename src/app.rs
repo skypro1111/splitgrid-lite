@@ -196,6 +196,8 @@ pub struct AppView {
     pub(crate) focus_mode: Option<String>,
     /// The pane each workspace left lifted in focus mode, restored on coming back.
     focus_by_ws: HashMap<String, String>,
+    /// Collapsed panes' chips and preview (crate::collapsed).
+    pub(crate) collapsed_ui: crate::collapsed::CollapsedUi,
     /// Focus mode's open/close reveal: (start, closing).
     pub(crate) focus_anim: Option<(Instant, bool)>,
     /// The lifted pane's tile, relative to the grid: where the reveal starts and ends.
@@ -387,6 +389,7 @@ impl AppView {
             root_focus: cx.focus_handle(),
             focus_mode: None,
             focus_by_ws: HashMap::new(),
+            collapsed_ui: Default::default(),
             focus_anim: None,
             focus_from: None,
             pane_bounds: Default::default(),
@@ -651,6 +654,7 @@ impl AppView {
     }
 
     fn after_switch(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_preview(cx);
         self.renaming = None;
         self.popover = None;
         // Back in a workspace left in focus mode: its pane is lifted again, without the grow animation.
@@ -1477,6 +1481,7 @@ impl AppView {
         if ws.collapse(id, zone.as_ref()).is_none() {
             return;
         }
+        self.close_preview(cx);
         if self.focus_mode.as_deref() == Some(id) {
             self.focus_mode = None;
         }
@@ -1494,6 +1499,7 @@ impl AppView {
         if let Some(ws) = self.state.workspaces.iter_mut().find(|w| w.is_collapsed(id)) {
             ws.expand(id, direction);
         }
+        self.close_preview(cx);
         self.focus_mode = None;
         self.focus_pending = true;
         self.changed(cx);
@@ -1508,6 +1514,9 @@ impl AppView {
             return;
         }
         self.sql_panes.remove(id);
+        if self.collapsed_ui.preview.as_deref() == Some(id) {
+            self.close_preview(cx);
+        }
         self.drop_browser_pane(id, cx);
         self.panes.remove(id);
         // A persistent terminal's session ends with its pane (dropping the view only detaches).
@@ -1775,6 +1784,7 @@ impl Render for AppView {
         let title = (!window.is_fullscreen()).then(|| self.render_title_strip(cx));
         let status = self.render_status_bar(cx);
         let popover = self.popover.clone().map(|p| self.render_popover(p, window, cx));
+        let collapsed_preview = self.render_collapsed_preview(cx);
         let picker = self.env_picker_open.then(|| self.render_env_picker(window, cx));
         let settings = self.render_settings(window, cx);
         let editor = self.render_editor(window, cx);
@@ -1824,6 +1834,7 @@ impl Render for AppView {
             .child(div().flex_1().min_h_0().flex().child(sidebar).child(grid))
             .child(status)
             .children(popover)
+            .children(collapsed_preview)
             .children(picker)
             .children(settings)
             .children(editor)

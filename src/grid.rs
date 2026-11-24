@@ -462,11 +462,20 @@ impl AppView {
                     .items_center()
                     .gap(px(8.))
                     .child(
-                        traffic_light(SharedString::from(format!("close-{pid}")), LIGHT_RED, "light-close")
+                        traffic_light(SharedString::from(format!("close-{pid}")), LIGHT_RED, Some("light-close"))
                             .on_click(cx.listener(move |this, _, _, cx| this.close_pane(&p_close, cx))),
                     )
+                    .child({
+                        // Yellow collapses into the neighbour (crate::collapsed); grey when
+                        // it is the only pane or lifted.
+                        let p_collapse = pid.clone();
+                        let can = !lifted && ws.can_collapse(id);
+                        traffic_light(SharedString::from(format!("collapse-{pid}")), if can { LIGHT_YELLOW } else { LIGHT_OFF }, can.then_some("light-collapse"))
+                            .when(can, |d| d.on_click(cx.listener(move |this, _, _, cx| this.collapse_pane(&p_collapse, cx))))
+                            .when(!can, |d| d.cursor_default())
+                    })
                     .child(
-                        traffic_light(SharedString::from(format!("focus-{pid}")), LIGHT_GREEN, if lifted { "light-unzoom" } else { "light-zoom" })
+                        traffic_light(SharedString::from(format!("focus-{pid}")), LIGHT_GREEN, Some(if lifted { "light-unzoom" } else { "light-zoom" }))
                             .on_click(cx.listener(move |this, _, _, cx| this.toggle_focus_mode(Some(p_focus.clone()), cx))),
                     ),
             )
@@ -501,6 +510,7 @@ impl AppView {
                     .child(name),
             )
             .child(div().flex_1().min_w_0().truncate().text_size(px(10.)).text_color(TEXT_MUTED).child(subtitle))
+            .children(self.render_collapsed_chips(ws, id, cx))
             .when(ssh, |d| {
                 let rid = pid.clone();
                 d.child(
@@ -683,9 +693,12 @@ impl AppView {
 /// macOS's close red and zoom green.
 const LIGHT_RED: Rgba = hex(0xff5f57);
 const LIGHT_GREEN: Rgba = hex(0x28c840);
+const LIGHT_YELLOW: Rgba = hex(0xfebc2e);
+/// A light that does nothing here (macOS's disabled grey).
+const LIGHT_OFF: Rgba = hex(0x4a4a4c);
 
 /// A 12px pane-header light, its glyph shown while the header's lights are hovered.
-fn traffic_light(id: SharedString, color: Rgba, glyph: &str) -> Stateful<Div> {
+fn traffic_light(id: SharedString, color: Rgba, glyph: Option<&str>) -> Stateful<Div> {
     div()
         .id(id)
         .size(px(12.))
@@ -696,5 +709,7 @@ fn traffic_light(id: SharedString, color: Rgba, glyph: &str) -> Stateful<Div> {
         .flex()
         .items_center()
         .justify_center()
-        .child(svg().path(icon(glyph)).size(px(12.)).text_color(hexa(0x000000, 0.)).group_hover("pane-lights", |s| s.text_color(hexa(0x000000, 0.55))))
+        .when_some(glyph, |d, glyph| {
+            d.child(svg().path(icon(glyph)).size(px(12.)).text_color(hexa(0x000000, 0.)).group_hover("pane-lights", |s| s.text_color(hexa(0x000000, 0.55))))
+        })
 }

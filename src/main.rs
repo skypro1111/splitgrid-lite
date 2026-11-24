@@ -8,6 +8,7 @@ mod assets;
 mod background;
 mod browser;
 mod chrome;
+mod collapsed;
 mod commands;
 mod grid;
 mod history;

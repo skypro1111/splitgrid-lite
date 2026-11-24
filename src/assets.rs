@@ -23,6 +23,7 @@ icons!(
     "expand",
     "folder",
     "light-close",
+    "light-collapse",
     "light-unzoom",
     "light-zoom",
     "folder-open",

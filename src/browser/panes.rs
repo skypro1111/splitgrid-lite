@@ -149,6 +149,7 @@ impl AppView {
             }
         }
         open.extend(self.procs.pop_cover());
+        open.extend(self.collapsed_ui.anchor().map(crate::overlay::Cover::menu));
         open.extend(
             self.sftp_panes
                 .values()
