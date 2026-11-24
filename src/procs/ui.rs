@@ -777,7 +777,7 @@ impl AppView {
     fn task_rows(&self, ws_ids: Option<&str>, cx: &App) -> Vec<TermRow> {
         let mut rows = Vec::new();
         for ws in self.state.workspaces.iter().filter(|w| ws_ids.is_none_or(|id| w.id == id)) {
-            let order = ws.layout_tree.as_ref().map(|t| t.leaf_ids()).unwrap_or_default();
+            let order = ws.live_ids();
             for c in order.iter().filter_map(|id| ws.container(id)) {
                 let Some(pane) = self.panes.get(&c.id) else {
                     continue;

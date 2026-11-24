@@ -629,6 +629,9 @@ impl AppView {
         if let Some(w) = self.state.workspaces.iter_mut().find(|w| w.id == ws)
             && w.container(id).is_some()
         {
+            // A collapsed terminal: its parent, whose header holds it.
+            let id = w.collapsed_parent(id).unwrap_or_else(|| id.to_owned());
+            let id = id.as_str();
             w.focused_container_id = Some(id.to_owned());
             if self.focus_mode.as_deref().is_some_and(|f| f != id) {
                 self.focus_mode = None;
@@ -652,7 +655,7 @@ impl AppView {
         self.popover = None;
         // Back in a workspace left in focus mode: its pane is lifted again, without the grow animation.
         let active = self.state.active();
-        self.focus_mode = active.and_then(|w| self.focus_by_ws.get(&w.id).filter(|id| w.container(id).is_some()).cloned());
+        self.focus_mode = active.and_then(|w| self.focus_by_ws.get(&w.id).filter(|id| w.leaves().contains(id)).cloned());
         self.focus_anim = None;
         self.focus_from = None;
         self.focus_pending = true;
@@ -990,7 +993,8 @@ impl AppView {
             return;
         };
         let fallback = ws.working_directory.clone();
-        let leaves = ws.layout_tree.as_ref().map(|t| t.leaf_ids()).unwrap_or_default();
+        // Collapsed terminals run too (model::collapse).
+        let leaves = ws.live_ids();
         let mut local = Vec::new();
         let mut remote = Vec::new();
         for id in leaves {
@@ -1460,6 +1464,36 @@ impl AppView {
             return;
         };
         ws.split(target.as_deref(), direction);
+        self.focus_mode = None;
+        self.focus_pending = true;
+        self.changed(cx);
+    }
+
+    /// Collapse a pane into the neighbour that takes its space (model::collapse):
+    /// it keeps running, shown as a chip in that pane's header.
+    pub(crate) fn collapse_pane(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(ws) = self.state.workspaces.iter_mut().find(|w| w.leaves().iter().any(|l| l == id)) else { return };
+        let zone = crate::agent::zones::zone_of_pane(ws.layout_tree.as_ref(), id);
+        if ws.collapse(id, zone.as_ref()).is_none() {
+            return;
+        }
+        if self.focus_mode.as_deref() == Some(id) {
+            self.focus_mode = None;
+        }
+        self.focus_pending = true;
+        self.changed(cx);
+    }
+
+    /// Bring a collapsed pane back by splitting its parent across its longer side.
+    pub(crate) fn expand_pane(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(parent) = self.state.workspaces.iter().find_map(|w| w.collapsed_parent(id)) else { return };
+        let direction = match self.pane_bounds.borrow().get(&parent) {
+            Some(b) if b.size.height > b.size.width => Direction::Vertical,
+            _ => Direction::Horizontal,
+        };
+        if let Some(ws) = self.state.workspaces.iter_mut().find(|w| w.is_collapsed(id)) {
+            ws.expand(id, direction);
+        }
         self.focus_mode = None;
         self.focus_pending = true;
         self.changed(cx);

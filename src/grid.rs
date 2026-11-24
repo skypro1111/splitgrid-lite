@@ -59,7 +59,7 @@ pub const FOCUS_ANIM: std::time::Duration = std::time::Duration::from_millis(220
 impl AppView {
     pub(crate) fn render_grid_area(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(ws) = self.state.active() else { return div().flex_1().into_any_element() };
-        let focus = self.focus_mode.clone().filter(|id| ws.container(id).is_some());
+        let focus = self.focus_mode.clone().filter(|id| ws.leaves().contains(id));
         // While a close plays, the tree as it was (layout_anim.rs).
         let body = match self.layout_anim.display_tree().cloned().or_else(|| ws.layout_tree.clone()) {
             Some(tree) => self.render_node(&tree, Vec::new(), focus.as_deref(), window, cx),
