@@ -114,13 +114,21 @@ impl AppView {
                     }])
                     .child(self.render_pane(&id, true, window, cx))
                     .child(
-                        // The purple frame breathes (opacity 0.55 ↔ 1 over 3.4s), as in Electron.
+                        // The purple frame breathes (opacity 0.55 ↔ 1 over 3.4s), as in Electron,
+                        // with a glow inward (the lifted box clips anything outside it).
                         div()
                             .absolute()
                             .inset_0()
                             .rounded(px(8.))
-                            .border(px(1.5))
-                            .border_color(hexa(0xb082e2, 0.9))
+                            .border(px(2.))
+                            .border_color(hexa(0xb98aec, 1.))
+                            .shadow(vec![BoxShadow {
+                                color: c(hexa(0xb082e2, 0.55)),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(18.),
+                                spread_radius: px(1.),
+                                inset: true,
+                            }])
                             .with_animation(
                                 "focus-glow",
                                 Animation::new(std::time::Duration::from_millis(3400)).repeat(),

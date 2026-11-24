@@ -194,6 +194,8 @@ pub struct AppView {
     pub(crate) root_focus: FocusHandle,
     /// The pane shown alone over the grid (focus mode), if any.
     pub(crate) focus_mode: Option<String>,
+    /// The pane each workspace left lifted in focus mode, restored on coming back.
+    focus_by_ws: HashMap<String, String>,
     /// Focus mode's open/close reveal: (start, closing).
     pub(crate) focus_anim: Option<(Instant, bool)>,
     /// The lifted pane's tile, relative to the grid: where the reveal starts and ends.
@@ -384,6 +386,7 @@ impl AppView {
             focus_pending: true,
             root_focus: cx.focus_handle(),
             focus_mode: None,
+            focus_by_ws: HashMap::new(),
             focus_anim: None,
             focus_from: None,
             pane_bounds: Default::default(),
@@ -557,6 +560,7 @@ impl AppView {
             return;
         }
         self.flush();
+        self.stash_focus_mode();
         self.env_id = env_id;
         crate::windows::set_env(window.window_handle(), &self.env_id, cx);
         self.state = load_state(&self.store, &self.env_id);
@@ -609,6 +613,7 @@ impl AppView {
         if self.state.active_workspace_id.as_deref() == Some(id.as_str()) {
             return;
         }
+        self.stash_focus_mode();
         self.state.active_workspace_id = Some(id);
         self.changed(cx);
         self.after_switch(window, cx);
@@ -633,10 +638,23 @@ impl AppView {
         self.changed(cx);
     }
 
+    /// Remember the active workspace's lifted pane before leaving it.
+    fn stash_focus_mode(&mut self) {
+        let Some(ws) = self.state.active_workspace_id.clone() else { return };
+        match self.focus_mode.take().filter(|_| !matches!(self.focus_anim, Some((_, true)))) {
+            Some(id) => self.focus_by_ws.insert(ws, id),
+            None => self.focus_by_ws.remove(&ws),
+        };
+    }
+
     fn after_switch(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.renaming = None;
         self.popover = None;
-        self.focus_mode = None;
+        // Back in a workspace left in focus mode: its pane is lifted again, without the grow animation.
+        let active = self.state.active();
+        self.focus_mode = active.and_then(|w| self.focus_by_ws.get(&w.id).filter(|id| w.container(id).is_some()).cloned());
+        self.focus_anim = None;
+        self.focus_from = None;
         self.focus_pending = true;
         cx.notify();
     }
