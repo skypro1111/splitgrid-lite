@@ -435,13 +435,13 @@ fn remove_skill(claude: &Path, name: &str) {
     }
 }
 
-/// The bundled skills: in the app bundle's Resources, else (a dev build) the
-/// Electron app's sources next to this repo.
+/// The bundled skills: in the app bundle's Resources, else (a dev build) this
+/// repo's resources/skills.
 fn skills_dir() -> PathBuf {
     let bundled = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/skills")));
     match bundled {
         Some(dir) if dir.join("sg-browser/SKILL.md").is_file() => dir,
-        _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../swapit/resources/skills")),
+        _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/skills")),
     }
 }
 

@@ -46,16 +46,17 @@ cat > "$HELPER/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-# The helpers agents call ($SPLITGRID_TERMINAL_CLI, $SPLITGRID_HOOK_CLI, …), as the Electron app ships them.
+# The helpers agents call ($SPLITGRID_TERMINAL_CLI, $SPLITGRID_HOOK_CLI, …): copies of
+# the Electron app's (resources/, kept in step with it by hand).
 mkdir -p "$APP/Contents/Resources/helpers"
-cp ../swapit/resources/splitgrid-*.sh "$APP/Contents/Resources/helpers/"
+cp resources/helpers/splitgrid-*.sh "$APP/Contents/Resources/helpers/"
 chmod +x "$APP/Contents/Resources/helpers/"*.sh
 # The sg-* skills Agent integrations install into ~/.claude/skills (src/agent/install.rs).
 mkdir -p "$APP/Contents/Resources/skills"
-cp -R ../swapit/resources/skills/. "$APP/Contents/Resources/skills/"
+cp -R resources/skills/. "$APP/Contents/Resources/skills/"
 # The notification sounds (Settings → Notifications → Default sound).
 mkdir -p "$APP/Contents/Resources/sounds"
-cp ../swapit/src/renderer/sounds/*.mp3 "$APP/Contents/Resources/sounds/"
+cp resources/sounds/*.mp3 "$APP/Contents/Resources/sounds/"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -100,13 +100,13 @@ pub fn default_volume(s: &Settings) -> f32 {
     s.get("defaultVolume").and_then(Value::as_f64).map(|v| v.clamp(0., 1.) as f32).unwrap_or(DEFAULT_VOLUME)
 }
 
-/// The bundled mp3s: in the app bundle's Resources, else (a dev build) the
-/// Electron app's sources next to this repo.
+/// The bundled mp3s: in the app bundle's Resources, else (a dev build) this
+/// repo's resources/sounds.
 fn sounds_dir() -> PathBuf {
     let bundled = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/sounds")));
     match bundled {
         Some(dir) if dir.join(format!("{DEFAULT_SOUND_ID}.mp3")).is_file() => dir,
-        _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../swapit/src/renderer/sounds")),
+        _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/sounds")),
     }
 }
 

@@ -121,13 +121,13 @@ impl AgentConfig {
     }
 }
 
-/// The helper scripts: in the app bundle's Resources, else (a dev build) the
-/// Electron app's sources next to this repo.
+/// The helper scripts: in the app bundle's Resources, else (a dev build) this
+/// repo's resources/helpers.
 pub(crate) fn helpers_dir() -> PathBuf {
     let bundled = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.parent()?.join("Resources/helpers")));
     match bundled {
         Some(dir) if dir.join("splitgrid-terminal.sh").is_file() => dir,
-        _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../swapit/resources")),
+        _ => PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/helpers")),
     }
 }
 

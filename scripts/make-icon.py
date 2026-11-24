@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Render SplitGrid Lite's app icon: the full app's white "S" (its Icon Composer
-layer, ../swapit/public/logos/icon_macos.icon/Assets/logo-1024.png) on a lighter
+layer, copied to icon/logo-1024.png) on a lighter
 grey tile, laid out on Apple's macOS icon grid, written as icon/AppIcon.icns.
 
 The full app compiles a Liquid Glass icon with Xcode's actool; this needs only
@@ -10,7 +10,7 @@ import os, shutil, subprocess, sys, tempfile
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOGO = os.path.join(ROOT, "..", "swapit", "public", "logos", "icon_macos.icon", "Assets", "logo-1024.png")
+LOGO = os.path.join(ROOT, "icon", "logo-1024.png")
 OUT = os.path.join(ROOT, "icon", "AppIcon.icns")
 
 S = 1024

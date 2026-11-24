@@ -4,6 +4,8 @@ A native macOS port of SplitGrid, the workspace terminal manager, written in Rus
 [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui) (through `gpui-kit`).
 It reads and writes the same workspace files and data directory as the Electron app.
 
+Licensed under the GNU AGPL v3 or later (see `LICENSE`), as SplitGrid is.
+
 What it has:
 - tiled workspaces with local and SSH terminals, focus mode and collapsible panes;
 - browser, IDE, SQL and SFTP panes, plus workspace SFTP sync;
@@ -16,8 +18,7 @@ macOS only.
 
 Requirements:
 - macOS 13 or later;
-- the Rust toolchain pinned in `rust-toolchain.toml`;
-- the Electron app's repository checked out next to this one as `../swapit`. The bundle copies the agent helper scripts, skills and notification sounds from it.
+- the Rust toolchain pinned in `rust-toolchain.toml`.
 
 ```sh
 cargo build                 # debug build of the app
@@ -43,6 +44,7 @@ then load `extension/dist` unpacked in Chrome.
 | `crates/sg-history` | opt-in searchable history of Claude Code sessions |
 | `crates/sql-*` | the SQL pane's drivers (PostgreSQL, MySQL, SQLite, SQL Server) and language tools |
 | `extension/` | the Chrome extension agents drive a browser tab through |
+| `resources/` | agent helper scripts, `sg-*` skills and notification sounds, copied from the Electron app and kept in step with it by hand |
 | `assets/`, `icon/` | icons and the app icon |
 | `scripts/` | bundling and icon generation |
 
