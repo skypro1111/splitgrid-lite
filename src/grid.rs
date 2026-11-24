@@ -452,29 +452,23 @@ impl AppView {
                     }),
                 )
             })
+            // macOS-style lights: red closes, green lifts into (or out of) focus mode;
+            // their glyphs show while the pointer is over either.
             .child(
                 div()
-                    .id(SharedString::from(format!("close-{pid}")))
-                    .group("pane-close")
-                    .size(px(12.))
-                    .flex_none()
-                    .rounded_full()
-                    .bg(ACCENT_RED)
-                    .opacity(0.7)
-                    .hover(|d| d.opacity(1.))
-                    .cursor_pointer()
+                    .group("pane-lights")
                     .flex()
+                    .flex_none()
                     .items_center()
-                    .justify_center()
+                    .gap(px(8.))
                     .child(
-                        div()
-                            .text_size(px(8.))
-                            .line_height(px(8.))
-                            .text_color(hexa(0, 0.))
-                            .group_hover("pane-close", |s| s.text_color(bg_primary()))
-                            .child("×"),
+                        traffic_light(SharedString::from(format!("close-{pid}")), LIGHT_RED, "light-close")
+                            .on_click(cx.listener(move |this, _, _, cx| this.close_pane(&p_close, cx))),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.close_pane(&p_close, cx))),
+                    .child(
+                        traffic_light(SharedString::from(format!("focus-{pid}")), LIGHT_GREEN, if lifted { "light-unzoom" } else { "light-zoom" })
+                            .on_click(cx.listener(move |this, _, _, cx| this.toggle_focus_mode(Some(p_focus.clone()), cx))),
+                    ),
             )
             .when_some(tray_place, |d, place| {
                 let into = place == ZonePlace::Main;
@@ -495,32 +489,14 @@ impl AppView {
             })
             .child(
                 div()
-                    .id(SharedString::from(format!("focus-{pid}")))
-                    .size(px(16.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .hover(|d| d.bg(bg_hover()))
-                    .child(
-                        svg()
-                            .path(icon(if lifted { "compress" } else { "expand" }))
-                            .size(px(13.))
-                            .text_color(if lifted { ACCENT } else { TEXT_MUTED }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_focus_mode(Some(p_focus.clone()), cx))),
-            )
-            .when_some(dot, |d, dot| d.child(div().size(px(7.)).flex_none().rounded_full().bg(dot)))
-            .child(
-                div()
                     .px(px(if caption { 0. } else { 4. }))
                     .py(px(1.))
                     .rounded(px(3.))
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(if caption { TEXT_MUTED } else { TEXT_PRIMARY })
+                    // The status (running, connecting, failed) tints the name: a dot
+                    // beside the lights read as a third one.
+                    .text_color(if caption { TEXT_MUTED } else { dot.unwrap_or(TEXT_PRIMARY) })
                     .flex_none()
                     .child(name),
             )
@@ -702,4 +678,23 @@ impl AppView {
                 .into_any_element(),
         )
     }
+}
+
+/// macOS's close red and zoom green.
+const LIGHT_RED: Rgba = hex(0xff5f57);
+const LIGHT_GREEN: Rgba = hex(0x28c840);
+
+/// A 12px pane-header light, its glyph shown while the header's lights are hovered.
+fn traffic_light(id: SharedString, color: Rgba, glyph: &str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .size(px(12.))
+        .flex_none()
+        .rounded_full()
+        .bg(color)
+        .cursor_pointer()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(svg().path(icon(glyph)).size(px(12.)).text_color(hexa(0x000000, 0.)).group_hover("pane-lights", |s| s.text_color(hexa(0x000000, 0.55))))
 }
