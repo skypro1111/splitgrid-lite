@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use super::zones::{self, OpenArgs, ZoneOwner, ZoneSplit};
 use crate::app::AppView;
+use crate::model::layout::ZoneTag;
 use crate::model::workspace::{Container, ContainerContent, ContentType, Workspace, new_id};
 use crate::terminal::view::TerminalView;
 
@@ -51,12 +52,12 @@ fn help() -> Value {
             "open ssh <connection>        — open an SSH terminal from a saved connection, in your zone",
             "     [--split right|down]    — where the new pane goes (default: alternates)",
             "     [--at <id>]             — which of your zone's panes to split (default: the last one)",
-            "     [--background|--bg]     — a background process (dev server, watcher): goes in the",
-            "                               thin tray along your zone's bottom, side by side",
+            "     [--background|--bg]     — a background process (dev server, watcher): opens collapsed,",
+            "                               a chip in your terminal's header (hover previews, click expands)",
             "zone                         — your zone's panes, in order",
             "connections                  — list saved SSH connections (name + host) for `open ssh`",
-            "background <id>              — collapse a terminal of your zone into its tray (keeps running)",
-            "foreground <id>              — bring a tray terminal of your zone back out as a regular pane",
+            "background <id>              — collapse a terminal of your zone into a chip in your header (keeps running)",
+            "foreground <id>              — expand a collapsed terminal of your zone back into the layout",
             "close <id>                   — close a terminal in your zone (kills it + its pane)",
             "--zone <name>                — on open/close/background/foreground/list/zone: use your own zone when you are a",
             "                               subagent (they share the parent's terminal); default: main",
@@ -165,13 +166,23 @@ pub(super) fn label_of(c: &Container, process: Option<&str>) -> String {
         .to_owned()
 }
 
+/// Collapsed panes (model::collapse) that belong to `owner`'s zone.
+pub(super) fn owned_collapsed(ws: &Workspace, owner: &ZoneOwner) -> Vec<String> {
+    ws.containers
+        .iter()
+        .filter(|c| ws.collapsed_zone(&c.id).is_some_and(|z| z.terminal == owner.terminal && z.name == owner.name))
+        .map(|c| c.id.clone())
+        .collect()
+}
+
 pub(super) fn zone_panes(ws: &Workspace, owner: &ZoneOwner) -> Value {
     let layout = zones::zone_layout(ws.layout_tree.as_ref(), owner);
     let entry = |id: &String, background: bool| {
         let kind = ws.container(id).map(|c| c.content.kind.wire_name()).unwrap_or("empty");
         if background { json!({ "id": id, "type": kind, "background": true }) } else { json!({ "id": id, "type": kind }) }
     };
-    Value::Array(layout.main.iter().map(|id| entry(id, false)).chain(layout.tray.iter().map(|id| entry(id, true))).collect())
+    let background = layout.tray.iter().cloned().chain(owned_collapsed(ws, owner));
+    Value::Array(layout.main.iter().map(|id| entry(id, false)).chain(background.map(|id| entry(&id, true))).collect())
 }
 
 impl AppView {
@@ -201,7 +212,8 @@ impl AppView {
             }
             "list" => {
                 let ws = &self.state.workspaces[ws_ix];
-                let in_zone = zones::zone_pane_ids(ws.layout_tree.as_ref(), &owner);
+                let mut in_zone = zones::zone_pane_ids(ws.layout_tree.as_ref(), &owner);
+                in_zone.extend(owned_collapsed(ws, &owner));
                 let terminals: Vec<Value> = ws
                     .containers
                     .iter()
@@ -215,6 +227,7 @@ impl AppView {
                             "cwd": self.terminal_cwd(c),
                             "mine": c.id == terminal,
                             "inZone": in_zone.contains(&c.id),
+                            "collapsed": ws.is_collapsed(&c.id),
                         })
                     })
                     .collect();
@@ -279,11 +292,11 @@ impl AppView {
         let ws = &self.state.workspaces[ws_ix];
         if let Some(at) = &flags.at {
             let layout = zones::zone_layout(ws.layout_tree.as_ref(), owner);
-            let pool = if flags.background { &layout.tray } else { &layout.main };
-            if !pool.contains(at) {
+            // A background pane collapses into --at: a regular pane of the zone, or this terminal.
+            if !layout.main.contains(at) && !(flags.background && at == terminal) {
                 let panes = zone_panes(ws, owner);
                 let message = if panes.as_array().is_some_and(|a| !a.is_empty()) {
-                    format!("--at must be one of your zone's {} panes", if flags.background { "tray" } else { "regular" })
+                    "--at must be one of your zone's regular panes".to_owned()
                 } else {
                     "your zone has no panes yet; open one without --at".to_owned()
                 };
@@ -328,23 +341,41 @@ impl AppView {
 
         let id = new_id("c");
         let ws = &mut self.state.workspaces[ws_ix];
-        let args = OpenArgs {
+        let label = content.label.clone();
+        let cwd = content.cwd.clone();
+        if flags.background {
+            // Collapsed into this terminal's header (or --at, or the zone's first
+            // pane when this terminal is collapsed itself), owned by the zone.
+            let leaves = ws.leaves();
+            let main = zones::zone_layout(ws.layout_tree.as_ref(), owner).main;
+            let Some(parent) = flags
+                .at
+                .clone()
+                .or_else(|| leaves.contains(&terminal.to_owned()).then(|| terminal.to_owned()))
+                .or_else(|| main.first().cloned())
+                .or_else(|| leaves.first().cloned())
+            else {
+                return fail("no_layout", "this workspace has no pane to hold a background terminal");
+            };
+            let tag = ZoneTag { terminal: owner.terminal.clone(), name: owner.name.clone(), label: zone_label };
+            ws.add_collapsed(Container { id: id.clone(), content }, &parent, Some(&tag));
+        } else {
+            let args = OpenArgs {
             owner,
             label: &zone_label,
             new_id: &id,
             anchor_id: Some(terminal),
             at: flags.at.as_deref(),
             split,
-            background: flags.background,
+            background: false,
         };
-        match zones::open_in_zone(ws.layout_tree.take(), &args) {
-            Ok(tree) => ws.layout_tree = Some(tree),
-            Err(message) => return fail("not_in_zone", message),
+            match zones::open_in_zone(ws.layout_tree.take(), &args) {
+                Ok(tree) => ws.layout_tree = Some(tree),
+                Err(message) => return fail("not_in_zone", message),
+            }
+            ws.containers.push(Container { id: id.clone(), content });
+            ws.updated_at = crate::model::workspace::now_ms();
         }
-        let label = content.label.clone();
-        let cwd = content.cwd.clone();
-        ws.containers.push(Container { id: id.clone(), content });
-        ws.updated_at = crate::model::workspace::now_ms();
 
         // Start it now, even in a workspace that isn't on screen.
         match &conn {
@@ -371,6 +402,7 @@ impl AppView {
         }
         if flags.background {
             data["background"] = true.into();
+            data["collapsed"] = true.into();
         }
         ok(data)
     }
@@ -384,7 +416,7 @@ impl AppView {
             return reply(false, Some("out_of_scope"), json!({ "message": "no such terminal in your workspace; run: list", "id": target }));
         };
         let args = &rest[1..];
-        let in_zone = zones::zone_pane_ids(ws.layout_tree.as_ref(), owner).contains(&target);
+        let in_zone = zones::zone_pane_ids(ws.layout_tree.as_ref(), owner).contains(&target) || owned_collapsed(ws, owner).contains(&target);
         let not_in_zone = |what: &str| {
             reply(false, Some("not_in_zone"), json!({ "message": what, "id": target, "zone": owner.name, "panes": zone_panes(ws, owner) }))
         };
@@ -438,18 +470,41 @@ impl AppView {
                 self.close_pane(&target, cx);
                 ok(json!({ "id": target, "closed": true, "mine": target == terminal }))
             }
-            "background" | "foreground" => {
+            "background" => {
                 if !in_zone {
-                    return not_in_zone("only panes in your zone can be moved to or from its tray");
+                    return not_in_zone("only panes in your zone can be collapsed");
                 }
-                let to_tray = cmd == "background";
-                let moved = zones::move_zone_pane(ws.layout_tree.as_ref(), &target, to_tray, Some(terminal));
+                if target == terminal {
+                    return fail("is_caller", "you can't collapse your own terminal");
+                }
+                let was = ws.is_collapsed(&target);
+                let moved = !was && ws.can_collapse(&target);
+                if moved {
+                    self.collapse_pane(&target, cx);
+                }
+                // Its chip goes in this terminal's header when that is in the layout.
+                if self.state.workspaces[ws_ix].move_collapsed(&target, terminal) {
+                    self.changed(cx);
+                }
+                let collapsed = self.state.workspaces[ws_ix].is_collapsed(&target);
+                ok(json!({ "id": target, "background": collapsed, "collapsed": collapsed, "moved": moved, "zone": owner.name }))
+            }
+            "foreground" => {
+                if !in_zone {
+                    return not_in_zone("only panes in your zone can be expanded");
+                }
+                if ws.is_collapsed(&target) {
+                    self.expand_pane(&target, cx);
+                    return ok(json!({ "id": target, "background": false, "collapsed": false, "moved": true, "zone": owner.name }));
+                }
+                // A pane in an older layout's zone tray comes back out of it.
+                let moved = zones::move_zone_pane(ws.layout_tree.as_ref(), &target, false, Some(terminal));
                 let did_move = moved.is_some();
                 if let Some(tree) = moved {
                     self.state.workspaces[ws_ix].layout_tree = Some(tree);
                     self.changed(cx);
                 }
-                ok(json!({ "id": target, "background": to_tray, "moved": did_move, "zone": owner.name }))
+                ok(json!({ "id": target, "background": false, "collapsed": false, "moved": did_move, "zone": owner.name }))
             }
             _ => fail("unknown_command", format!("unknown command: {cmd}")),
         }

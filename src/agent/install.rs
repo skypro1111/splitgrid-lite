@@ -449,25 +449,44 @@ fn skills_dir() -> PathBuf {
 
 const BACKGROUND_DESCRIPTION: &str =
     " - and to open a small tray pane for a long-running process the user wants to watch. Simple background jobs may stay background Bash jobs.";
-const PANES_DESCRIPTION: &str = " - and to start any long-running process (dev server, watcher, tail -f, http.server) in a small tray pane instead of a background Bash job, so the user can watch and stop it.";
+const PANES_DESCRIPTION: &str = " - and to start any long-running process (dev server, watcher, tail -f, http.server) in a collapsed background pane instead of a background Bash job, so the user can watch and stop it.";
 const BACKGROUND_RULE: &str = "- **Simple background jobs may stay in the background.** A dev server,
   watcher or `tail -f` that only has to keep running can be a background Bash
   job (`run_in_background`). Open a tray pane with `open <label> --background`
   instead when the user asks to see it, or it must outlive this session.
   Background panes sit in a thin strip along the zone's bottom.";
-const PANES_RULE: &str = "- **Long-running processes go in a tray pane, not the background.** A dev
+const PANES_RULE: &str = "- **Long-running processes go in a collapsed pane, not the background.** A dev
   server, watcher, `tail -f` or `python3 -m http.server` started with
   `run_in_background` or `&` is invisible to the user and dies with this
   session. `open <label> --background` a terminal, `send` the command there,
-  then `read` it. Background panes sit in a thin strip along the zone's
-  bottom, so they stay visible without crowding the layout.";
+  then `read` it. Background panes are collapsed into a chip in this
+  terminal's header, so they keep running without crowding the layout.";
+
+/// Lite has no zone tray: background panes collapse into a chip in the
+/// agent's terminal header (model::collapse). The shared skill text says tray.
+const LITE_COLLAPSE: &[(&str, &str)] = &[
+    ("a small tray pane", "a collapsed background pane"),
+    ("Open a tray pane with `open <label> --background`", "Open a collapsed pane with `open <label> --background`"),
+    ("  Background panes sit in a thin strip along the zone's bottom.", "  Background panes are collapsed into a chip in this terminal's header."),
+    ("move it to the tray with\n  `background <id>`", "collapse it with\n  `background <id>`"),
+    ("# in the zone's tray strip", "# collapsed into this terminal's header"),
+    (
+        "puts the pane in the zone's tray, a thin strip\n  along its bottom where background processes line up left to right.",
+        "opens the pane collapsed: it runs as a chip in\n  this terminal's header (hovering previews it, a click expands it).",
+    ),
+    ("Move a terminal of the zone between its regular panes and its tray at any time.", "Collapse a terminal of the zone, or bring it back, at any time."),
+    ("# collapse into the tray", "# collapse into a chip in your terminal's header"),
+    ("The user can do the same from the tray button in each zone pane's header.", "The user can do the same with the yellow light in a pane's header, and a click on its chip."),
+];
 
 /// The sg-terminal skill text for the chosen long-running-process policy.
 pub fn render_terminal_skill(text: &str, long_running_in_panes: bool) -> String {
-    if !long_running_in_panes {
-        return text.to_owned();
-    }
-    text.replacen(BACKGROUND_DESCRIPTION, PANES_DESCRIPTION, 1).replacen(BACKGROUND_RULE, PANES_RULE, 1)
+    let text = if long_running_in_panes {
+        text.replacen(BACKGROUND_DESCRIPTION, PANES_DESCRIPTION, 1).replacen(BACKGROUND_RULE, PANES_RULE, 1)
+    } else {
+        text.to_owned()
+    };
+    LITE_COLLAPSE.iter().fold(text, |t, (from, to)| t.replace(from, to))
 }
 
 // ── Hook config JSON ─────────────────────────────────────────────────────────
@@ -912,6 +931,10 @@ mod tests {
         let text = fs::read_to_string(skills_dir().join("sg-terminal/SKILL.md")).unwrap();
         let panes = render_terminal_skill(&text, true);
         assert!(panes.contains(PANES_RULE) && panes.contains(PANES_DESCRIPTION));
-        assert_eq!(render_terminal_skill(&text, false), text);
+        // Lite collapses background panes: no tray left in either policy.
+        for rendered in [panes, render_terminal_skill(&text, false)] {
+            let left: Vec<&str> = rendered.lines().filter(|l| l.contains("tray")).collect();
+            assert!(left.is_empty(), "tray still mentioned: {left:?}");
+        }
     }
 }

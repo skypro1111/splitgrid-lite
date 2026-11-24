@@ -103,6 +103,17 @@ impl Workspace {
         true
     }
 
+    /// Show a collapsed pane in another parent's header. False unless it is
+    /// collapsed and `parent` is in the layout.
+    pub fn move_collapsed(&mut self, id: &str, parent: &str) -> bool {
+        if !self.is_collapsed(id) || !self.is_leaf(parent) {
+            return false;
+        }
+        let zone = self.collapsed_zone(id);
+        self.mark(id, parent, zone.as_ref());
+        true
+    }
+
     /// Put a collapsed pane back: it splits its parent (`direction`) and takes
     /// the second half. False when it isn't collapsed.
     pub fn expand(&mut self, id: &str, direction: Direction) -> bool {
@@ -237,5 +248,8 @@ mod tests {
         assert!(ws.add_collapsed(bg, "a", None));
         assert_eq!(ws.collapsed_in("a"), ["bg"]);
         assert_eq!(ws.leaves(), ["a", "b", "c"]);
+        assert!(ws.move_collapsed("bg", "c"));
+        assert_eq!(ws.collapsed_in("c"), ["bg"]);
+        assert!(!ws.move_collapsed("a", "c"), "a is not collapsed");
     }
 }

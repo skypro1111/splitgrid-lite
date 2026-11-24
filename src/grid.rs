@@ -199,7 +199,12 @@ impl AppView {
 
     /// An agent's zone (agent::zones): a thin labelled frame around its panes,
     /// with × to close them all (the Electron app's ZoneFrame).
-    fn render_zone_frame(&self, zone: &ZoneTag, panes: Vec<String>, inner: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+    fn render_zone_frame(&self, zone: &ZoneTag, mut panes: Vec<String>, inner: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        // Its collapsed background panes are the zone's too (× closes them with it).
+        if let Some(ws) = self.state.active() {
+            let owned = |id: &str| ws.collapsed_zone(id).is_some_and(|z| z.terminal == zone.terminal && z.name == zone.name);
+            panes.extend(ws.containers.iter().filter(|c| owned(&c.id)).map(|c| c.id.clone()));
+        }
         let count = panes.len();
         let key = format!("zone-{}-{}", zone.terminal, zone.name);
         div()
@@ -425,8 +430,9 @@ impl AppView {
 
         let pid = id.to_owned();
         let (p_close, p_focus, p_right, p_down, p_tray) = (pid.clone(), pid.clone(), pid.clone(), pid.clone(), pid.clone());
-        // In an agent's zone: the button to collapse into (or expand out of) its tray.
-        let tray_place = zone_places(ws.layout_tree.as_ref()).get(id).copied();
+        // In an older layout's zone tray: the button to bring it out. (New background
+        // panes collapse instead, with the yellow light; nothing goes into a tray now.)
+        let tray_place = zone_places(ws.layout_tree.as_ref()).get(id).copied().filter(|p| *p != ZonePlace::Main);
         // The header is the pane's drag handle (Electron's .container-drag-handle):
         // drop it on another pane to swap the two. Not in focus mode, where the
         // lifted pane covers every other one.
