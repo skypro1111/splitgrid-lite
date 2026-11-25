@@ -144,6 +144,8 @@ const PANE_DRAG_THRESHOLD: f32 = 4.;
 pub enum Renaming {
     Workspace(String),
     Environment(String),
+    /// A terminal pane's header name (its container id): Electron's EditableTerminalName.
+    Pane(String),
 }
 
 /// The sidebar popovers (WorkspaceNotesTodo / EnvTodoButton in the Electron app).
@@ -231,6 +233,8 @@ pub struct AppView {
     pub(crate) todo_input: Entity<InputState>,
     pub(crate) rename_input: Entity<InputState>,
     pub(crate) renaming: Option<Renaming>,
+    /// An image ⌘-clicked in a terminal, shown over the window (crate::image_view).
+    pub(crate) image_preview: Option<crate::image_view::ImagePreview>,
     /// The notes text last pushed into the textarea, to tell its own edits from ours.
     notes_shown: String,
     _subscriptions: Vec<Subscription>,
@@ -409,6 +413,7 @@ impl AppView {
             todo_input,
             rename_input,
             renaming: None,
+            image_preview: None,
             notes_shown: String::new(),
             _subscriptions: subscriptions,
             _poll: poll,
@@ -809,11 +814,21 @@ impl AppView {
             return;
         };
         self.focus_pending = true;
+        // A pane's name may be cleared: it goes back to the automatic one (the
+        // foreground program, or the SSH label), as in the Electron app.
+        if let Renaming::Pane(id) = &what {
+            if let Some(content) = self.state.workspaces.iter_mut().find_map(|w| w.container_mut(id)).map(|c| &mut c.content) {
+                content.custom_name = (!text.is_empty()).then_some(text);
+            }
+            self.changed(cx);
+            return;
+        }
         if text.is_empty() {
             cx.notify();
             return;
         }
         match what {
+            Renaming::Pane(_) => unreachable!("handled above"),
             Renaming::Workspace(id) => {
                 if let Some(ws) = self.state.workspaces.iter_mut().find(|w| w.id == id) {
                     ws.name = text;
@@ -1264,6 +1279,7 @@ impl AppView {
             TerminalEvent::TitleChanged => cx.notify(),
             TerminalEvent::Remote(status) => this.on_remote_status(&pane_id, status.clone(), cx),
             TerminalEvent::Command(command) => this.record_recent_command(command, cx),
+            TerminalEvent::OpenLink(target) => this.open_link(target.clone(), cx),
         });
         self.panes.insert(id, Pane { view, process: None, _subscription: subscription });
     }
@@ -1765,7 +1781,7 @@ impl Render for AppView {
         if self.settings_tab == Some(crate::settings::SettingsTab::General) {
             self.ensure_appearance_controls(window, cx);
         }
-        if self.focus_pending && self.renaming.is_none() && self.popover.is_none() && self.editor.is_none() && self.settings_tab.is_none() && self.sync_settings.is_none() && !self.procs.overlay_open() {
+        if self.focus_pending && self.renaming.is_none() && self.image_preview.is_none() && self.popover.is_none() && self.editor.is_none() && self.settings_tab.is_none() && self.sync_settings.is_none() && !self.procs.overlay_open() {
             self.focus_pending = false;
             self.focus_active_pane(window, cx);
         }
@@ -1792,6 +1808,7 @@ impl Render for AppView {
         let dragging = matches!(self.drag, Some(Drag::Split { .. } | Drag::Sidebar | Drag::Pane { active: true, .. }));
         let pane_drag = self.render_pane_drag(cx);
         let procs_overlay = self.render_procs_overlay(window, cx);
+        let image_preview = self.render_image_preview(window, cx);
 
         div()
             .size_full()
@@ -1841,5 +1858,6 @@ impl Render for AppView {
             .children(sync_settings)
             .children(pane_drag)
             .children(procs_overlay)
+            .children(image_preview)
     }
 }

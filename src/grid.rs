@@ -6,7 +6,7 @@ use gpui_kit::*;
 // Zoom-aware: scales with the whole-window UI zoom (crate::ui).
 use crate::ui::px;
 
-use crate::app::{AppView, Drag};
+use crate::app::{AppView, Drag, Renaming};
 use crate::assets::icon;
 use crate::agent::zones::{ZonePlace, zone_places};
 use crate::model::layout::{Direction, LayoutNode, NodePath, ZoneTag};
@@ -428,8 +428,10 @@ impl AppView {
             }
         };
 
+        let renamable = content.kind == ContentType::Terminal;
+        let renaming = renamable && matches!(&self.renaming, Some(Renaming::Pane(r)) if r == id);
         let pid = id.to_owned();
-        let (p_close, p_focus, p_right, p_down, p_tray) = (pid.clone(), pid.clone(), pid.clone(), pid.clone(), pid.clone());
+        let (p_close, p_focus, p_right, p_down, p_tray) =(pid.clone(), pid.clone(), pid.clone(), pid.clone(), pid.clone());
         // In an older layout's zone tray: the button to bring it out. (New background
         // panes collapse instead, with the yellow light; nothing goes into a tray now.)
         let tray_place = zone_places(ws.layout_tree.as_ref()).get(id).copied().filter(|p| *p != ZonePlace::Main);
@@ -502,8 +504,17 @@ impl AppView {
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_zone_tray(&p_tray, cx))),
                 )
             })
-            .child(
+            .child(if renaming {
                 div()
+                    .w(px(160.))
+                    .flex_none()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(self.rename_field(cx))
+                    .into_any_element()
+            } else {
+                let (p_rename, current) = (pid.clone(), content.custom_name.clone().unwrap_or_else(|| name.to_string()));
+                div()
+                    .id(SharedString::from(format!("pane-name-{pid}")))
                     .px(px(if caption { 0. } else { 4. }))
                     .py(px(1.))
                     .rounded(px(3.))
@@ -513,8 +524,20 @@ impl AppView {
                     // beside the lights read as a third one.
                     .text_color(if caption { TEXT_MUTED } else { dot.unwrap_or(TEXT_PRIMARY) })
                     .flex_none()
-                    .child(name),
-            )
+                    // A terminal's name is renamed with a click (Electron's EditableTerminalName);
+                    // the click must not start a header drag.
+                    .when(renamable, |d| {
+                        d.cursor_text()
+                            .hover(|d| d.bg(bg_hover()))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.start_rename(Renaming::Pane(p_rename.clone()), current.clone(), window, cx);
+                            }))
+                    })
+                    .child(name)
+                    .into_any_element()
+            })
             .child(div().flex_1().min_w_0().truncate().text_size(px(10.)).text_color(TEXT_MUTED).child(subtitle))
             .children(self.render_collapsed_chips(ws, id, cx))
             .when(ssh, |d| {

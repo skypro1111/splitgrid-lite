@@ -9,6 +9,7 @@
 
 pub mod colors;
 pub mod keys;
+pub mod links;
 pub mod mouse;
 pub mod procinfo;
 pub mod view;
@@ -143,6 +144,27 @@ impl GridSize {
     }
 }
 
+/// What every shell SplitGrid starts gets on top of the app's environment, in
+/// process (Terminal::spawn) or under the PTY daemon (ptyd::spawn_daemon).
+pub fn add_shell_env(env: &mut HashMap<String, String>) {
+    env.insert("TERM".to_owned(), "xterm-256color".to_owned());
+    env.insert("COLORTERM".to_owned(), "truecolor".to_owned());
+    env.insert("TERM_PROGRAM".to_owned(), "SplitGrid".to_owned());
+    // An app started from Finder or the Dock has no LANG. Terminal.app and iTerm
+    // set one; without it pbcopy/pbpaste read text as MacRoman, so Cyrillic or
+    // emoji copied out of Claude Code (which copies through pbcopy) arrives as
+    // mojibake ("чи" → "—á–∏"). A LANG the user set is left alone.
+    let lang_set = |e: &HashMap<String, String>| e.get("LANG").is_some_and(|v| !v.is_empty());
+    if !lang_set(env) && std::env::var("LANG").map_or(true, |v| v.is_empty()) {
+        env.insert("LANG".to_owned(), "en_US.UTF-8".to_owned());
+    }
+    // Ask CLIs (Claude Code among them) for OSC 8 hyperlinks, which ⌘-click opens:
+    // they don't recognise TERM_PROGRAM=SplitGrid as a terminal that has them.
+    if !env.contains_key("FORCE_HYPERLINK") && std::env::var_os("FORCE_HYPERLINK").is_none() {
+        env.insert("FORCE_HYPERLINK".to_owned(), "1".to_owned());
+    }
+}
+
 pub struct Terminal {
     pub term: Arc<FairMutex<Term<Listener>>>,
     io: Io,
@@ -157,9 +179,7 @@ impl Terminal {
         let listener = Listener::new(tx);
 
         let mut env = extra_env;
-        env.insert("TERM".to_owned(), "xterm-256color".to_owned());
-        env.insert("COLORTERM".to_owned(), "truecolor".to_owned());
-        env.insert("TERM_PROGRAM".to_owned(), "SplitGrid".to_owned());
+        add_shell_env(&mut env);
         let options = tty::Options {
             shell: None, // the user's login shell, as alacritty resolves it
             working_directory: cwd.or_else(std::env::home_dir),

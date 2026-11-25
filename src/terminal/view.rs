@@ -51,6 +51,9 @@ pub enum TerminalEvent {
     Remote(RemoteStatus),
     /// A command was typed at the prompt and submitted (crate::commands::capture).
     Command(String),
+    /// A link was ⌘-clicked: an image opens in the app's viewer, anything else
+    /// in its default app (super::links).
+    OpenLink(super::links::Target),
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -89,6 +92,8 @@ pub struct TerminalView {
     resize_hold: bool,
     /// The line being typed, for the sidebar's recent-command feed.
     capture: std::cell::RefCell<crate::commands::capture::LineCapture>,
+    /// The link under the pointer while ⌘ is held: underlined, and the pointer is a hand.
+    hover_link: Option<super::links::Link>,
 }
 
 /// The grid's bounds on screen and its cell size, as of the last frame.
@@ -190,6 +195,7 @@ impl TerminalView {
             reported_button: None,
             resize_hold: false,
             capture: Default::default(),
+            hover_link: None,
         }
     }
 
@@ -591,6 +597,19 @@ impl TerminalView {
             MouseButton::Right => Button::Right,
             _ => return,
         };
+        // ⌘-click opens a link, before a mouse-reporting program (Claude Code's
+        // fullscreen UI, vim) can take the click.
+        if button == Button::Left && ev.modifiers.platform {
+            let (point, _) = self.grid_point(pos);
+            let link = super::links::link_at(&self.terminal.term.lock(), point);
+            if let Some(link) = link {
+                self.hover_link = None;
+                cx.emit(TerminalEvent::OpenLink(link.target));
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+        }
         if self.reports_mouse(ev.modifiers.shift) {
             self.reported_button = Some(button);
             self.send_mouse(button, Action::Press, pos, mouse_mods(&ev.modifiers));
@@ -616,7 +635,29 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Track the link under the pointer while ⌘ is held (None clears it).
+    fn update_hover_link(&mut self, at: Point<Pixels>, cmd: bool, cx: &mut Context<Self>) {
+        // Only over this pane's grid: cell_at clamps a point outside it to the edge.
+        let inside = self.layout.get().is_some_and(|(bounds, _)| bounds.contains(&at));
+        let link = match self.cell_at(at) {
+            Some(pos) if cmd && inside && !self.selecting => {
+                let (point, _) = self.grid_point(pos);
+                super::links::link_at(&self.terminal.term.lock(), point)
+            }
+            _ => None,
+        };
+        if link != self.hover_link {
+            self.hover_link = link;
+            cx.notify();
+        }
+    }
+
+    fn on_modifiers_changed(&mut self, ev: &ModifiersChangedEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_hover_link(window.mouse_position(), ev.modifiers.platform, cx);
+    }
+
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.update_hover_link(ev.position, ev.modifiers.platform, cx);
         let Some(pos) = self.cell_at(ev.position) else { return };
         if self.selecting && ev.pressed_button == Some(MouseButton::Left) {
             let (point, side) = self.grid_point(pos);
@@ -745,10 +786,11 @@ fn build_frame(view: &TerminalView, metrics: Metrics, focused: bool) -> Frame {
         if cell.flags.contains(Flags::ITALIC) {
             f.style = FontStyle::Italic;
         }
-        let underline = cell.flags.intersects(Flags::ALL_UNDERLINES).then(|| UnderlineStyle {
+        let hovered_link = view.hover_link.as_ref().is_some_and(|l| l.start <= indexed.point && indexed.point <= l.end);
+        let underline = (hovered_link || cell.flags.intersects(Flags::ALL_UNDERLINES)).then(|| UnderlineStyle {
             thickness: px(1.),
             color: Some(fg_h),
-            wavy: cell.flags.contains(Flags::UNDERCURL),
+            wavy: !hovered_link && cell.flags.contains(Flags::UNDERCURL),
         });
         let strike = cell.flags.contains(Flags::STRIKEOUT).then(|| StrikethroughStyle { thickness: px(1.), color: Some(fg_h) });
 
@@ -860,6 +902,8 @@ impl Render for TerminalView {
             .overflow_hidden()
             .bg(colors::hsla(colors::resolve(Color::Named(NamedColor::Background), &Default::default())))
             .when(self.exited, |d| d.opacity(0.6))
+            .when(self.hover_link.is_some(), |d| d.cursor_pointer())
+            .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll(cx.listener(Self::on_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
