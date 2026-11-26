@@ -426,6 +426,55 @@ impl WorkspaceState {
             self.active_workspace_id = self.workspaces.first().map(|w| w.id.clone());
         }
     }
+
+    /// Move workspace `id` to the place of workspace `onto` (dropped on it in the
+    /// sidebar): dragged down it lands after `onto`, dragged up before it.
+    pub fn move_workspace(&mut self, id: &str, onto: &str) -> bool {
+        let from = self.workspaces.iter().position(|w| w.id == id);
+        let to = self.workspaces.iter().position(|w| w.id == onto);
+        let (Some(from), Some(to)) = (from, to) else { return false };
+        if from == to {
+            return false;
+        }
+        let ws = self.workspaces.remove(from);
+        self.workspaces.insert(to, ws);
+        true
+    }
+
+    /// Move pane `id` (a leaf of its workspace's layout) into workspace `to`,
+    /// beside that workspace's focused pane; it keeps its container (and so its
+    /// running terminal) and its zoom, and becomes the focused pane there.
+    pub fn move_pane(&mut self, id: &str, to: &str) -> bool {
+        let Some(from) = self.workspaces.iter().position(|w| w.leaves().iter().any(|l| l == id)) else { return false };
+        let Some(dest) = self.workspaces.iter().position(|w| w.id == to) else { return false };
+        if from == dest {
+            return false;
+        }
+        let source = &mut self.workspaces[from];
+        let Some(container) = source.container(id).cloned() else { return false };
+        let zoom = source.zoom(id);
+        source.close(id);
+
+        let target = &mut self.workspaces[dest];
+        let beside = target.focused_container_id.clone().filter(|f| target.leaves().contains(f));
+        let placed = match (&mut target.layout_tree, beside) {
+            (Some(tree), Some(f)) => tree.split_leaf(&f, id, Direction::Horizontal),
+            _ => false,
+        };
+        if !placed {
+            target.layout_tree = Some(match target.layout_tree.take() {
+                Some(tree) => LayoutNode::split(Direction::Horizontal, 0.5, tree, LayoutNode::leaf(id)),
+                None => LayoutNode::leaf(id),
+            });
+        }
+        target.containers.push(container);
+        if let Some(z) = zoom {
+            target.set_zoom(id, z);
+        }
+        target.focused_container_id = Some(id.to_owned());
+        target.updated_at = now_ms();
+        true
+    }
 }
 
 #[cfg(test)]
@@ -528,6 +577,51 @@ mod tests {
         assert_eq!(t.status(), TodoStatus::InProgress);
         t.set_status(t.status().next().next());
         assert_eq!(t.status(), TodoStatus::Todo);
+    }
+
+    fn two_workspaces() -> WorkspaceState {
+        // A: two panes (the second zoomed), B: one, C: none.
+        let mut a = Workspace::new("A", None);
+        let second = a.split(None, Direction::Horizontal);
+        a.set_zoom(&second, 16.);
+        let b = Workspace::new("B", None);
+        let mut c = Workspace::new("C", None);
+        c.layout_tree = None;
+        c.containers.clear();
+        c.focused_container_id = None;
+        WorkspaceState { active_workspace_id: Some(a.id.clone()), workspaces: vec![a, b, c], ..Default::default() }
+    }
+
+    #[test]
+    fn a_workspace_moves_to_the_place_it_is_dropped_on() {
+        let mut s = two_workspaces();
+        let ids = |s: &WorkspaceState| s.workspaces.iter().map(|w| w.name.clone()).collect::<Vec<_>>();
+        let (a, c) = (s.workspaces[0].id.clone(), s.workspaces[2].id.clone());
+        assert!(s.move_workspace(&a, &c));
+        assert_eq!(ids(&s), ["B", "C", "A"]);
+        assert!(s.move_workspace(&a, &s.workspaces[0].id.clone()));
+        assert_eq!(ids(&s), ["A", "B", "C"]);
+        assert!(!s.move_workspace(&a, &a));
+        assert!(!s.move_workspace("nope", &c));
+    }
+
+    #[test]
+    fn a_pane_moves_to_another_workspace_with_its_container_and_zoom() {
+        let mut s = two_workspaces();
+        let moved = s.workspaces[0].leaves()[1].clone();
+        let (b, c) = (s.workspaces[1].id.clone(), s.workspaces[2].id.clone());
+        assert!(s.move_pane(&moved, &b));
+        assert_eq!(s.workspaces[0].leaves().len(), 1);
+        assert!(s.workspaces[0].container(&moved).is_none());
+        let dest = &s.workspaces[1];
+        assert_eq!(dest.leaves().len(), 2);
+        assert!(dest.leaves().contains(&moved) && dest.container(&moved).is_some());
+        assert_eq!(dest.focused_container_id.as_deref(), Some(moved.as_str()));
+        assert_eq!(dest.zoom(&moved), Some(16.));
+        // Into an empty workspace it is the whole layout; not into its own.
+        assert!(s.move_pane(&moved, &c));
+        assert_eq!(s.workspaces[2].leaves(), [moved.clone()]);
+        assert!(!s.move_pane(&moved, &c));
     }
 
     #[test]

@@ -53,6 +53,11 @@ pub struct Attention {
 }
 
 impl Attention {
+    /// The agent session terminal `id`'s hooks follow, while one runs.
+    pub fn session(&self, id: &str) -> Option<&str> {
+        self.activity.get(id)?.session.as_deref()
+    }
+
     /// A hook event from terminal `id`. True when its state changed.
     pub fn on_hook(&mut self, id: &str, event: &str, payload: &Value, now: u64) -> bool {
         let Some(event) = activity::hook_event(event) else { return false };

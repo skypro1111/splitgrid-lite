@@ -173,6 +173,7 @@ impl AppView {
             || self.settings_tab.is_some()
             || self.editor.is_some()
             || self.sync_settings.is_some()
+            || self.image_preview.is_some()
             || matches!(self.drag, Some(Drag::Pane { active: true, .. }))
     }
 

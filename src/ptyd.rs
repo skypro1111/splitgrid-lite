@@ -284,9 +284,7 @@ fn spawn_daemon(socket: &Path, cwd: Option<PathBuf>, mut env: HashMap<String, St
         adopt_agent_token(data, token);
     }
     // The same additions Terminal::spawn makes for an in-process shell.
-    env.insert("TERM".to_owned(), "xterm-256color".to_owned());
-    env.insert("COLORTERM".to_owned(), "truecolor".to_owned());
-    env.insert("TERM_PROGRAM".to_owned(), "SplitGrid".to_owned());
+    crate::terminal::add_shell_env(&mut env);
     let spec = SpawnSpec {
         socket: socket.to_path_buf(),
         cwd: cwd.filter(|p| p.is_dir()).or_else(std::env::home_dir),

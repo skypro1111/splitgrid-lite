@@ -6,7 +6,7 @@ use gpui_kit::*;
 // Zoom-aware: scales with the whole-window UI zoom (crate::ui).
 use crate::ui::px;
 
-use crate::app::{AppView, Drag};
+use crate::app::{AppView, Drag, Renaming};
 use crate::assets::icon;
 use crate::agent::zones::{ZonePlace, zone_places};
 use crate::model::layout::{Direction, LayoutNode, NodePath, ZoneTag};
@@ -428,8 +428,10 @@ impl AppView {
             }
         };
 
+        let renamable = content.kind == ContentType::Terminal;
+        let renaming = renamable && matches!(&self.renaming, Some(Renaming::Pane(r)) if r == id);
         let pid = id.to_owned();
-        let (p_close, p_focus, p_right, p_down, p_tray) = (pid.clone(), pid.clone(), pid.clone(), pid.clone(), pid.clone());
+        let (p_close, p_focus, p_right, p_down, p_tray) =(pid.clone(), pid.clone(), pid.clone(), pid.clone(), pid.clone());
         // In an older layout's zone tray: the button to bring it out. (New background
         // panes collapse instead, with the yellow light; nothing goes into a tray now.)
         let tray_place = zone_places(ws.layout_tree.as_ref()).get(id).copied().filter(|p| *p != ZonePlace::Main);
@@ -502,8 +504,17 @@ impl AppView {
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_zone_tray(&p_tray, cx))),
                 )
             })
-            .child(
+            .child(if renaming {
                 div()
+                    .w(px(160.))
+                    .flex_none()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(self.rename_field(cx))
+                    .into_any_element()
+            } else {
+                let (p_rename, current) = (pid.clone(), content.custom_name.clone().unwrap_or_else(|| name.to_string()));
+                div()
+                    .id(SharedString::from(format!("pane-name-{pid}")))
                     .px(px(if caption { 0. } else { 4. }))
                     .py(px(1.))
                     .rounded(px(3.))
@@ -513,10 +524,23 @@ impl AppView {
                     // beside the lights read as a third one.
                     .text_color(if caption { TEXT_MUTED } else { dot.unwrap_or(TEXT_PRIMARY) })
                     .flex_none()
-                    .child(name),
-            )
+                    // A terminal's name is renamed with a click (Electron's EditableTerminalName);
+                    // the click must not start a header drag.
+                    .when(renamable, |d| {
+                        d.cursor_text()
+                            .hover(|d| d.bg(bg_hover()))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.start_rename(Renaming::Pane(p_rename.clone()), current.clone(), window, cx);
+                            }))
+                    })
+                    .child(name)
+                    .into_any_element()
+            })
             .child(div().flex_1().min_w_0().truncate().text_size(px(10.)).text_color(TEXT_MUTED).child(subtitle))
             .children(self.render_collapsed_chips(ws, id, cx))
+            .children(self.render_resume_button(content, process.as_ref(), &pid, cx))
             .when(ssh, |d| {
                 let rid = pid.clone();
                 d.child(
@@ -615,7 +639,7 @@ impl AppView {
 
 /// The frame on the pane a dragged one would swap with (Electron's
 /// `.drag-target::after`: 2px dashed #4c9df3 inset 2px, pulsing over 1.2s).
-fn drop_target_frame() -> impl IntoElement {
+pub(crate) fn drop_target_frame() -> impl IntoElement {
     div()
         .absolute()
         .inset(px(2.))
@@ -630,6 +654,46 @@ fn drop_target_frame() -> impl IntoElement {
 }
 
 impl AppView {
+    /// "↻ Resume claude" in a terminal's header: its last agent session
+    /// (agent::resume), offered while the shell sits at its prompt — after a
+    /// reboot, or once the agent has exited.
+    fn render_resume_button(
+        &self,
+        content: &crate::model::workspace::ContainerContent,
+        process: Option<&crate::terminal::procinfo::Process>,
+        pid: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if content.kind != ContentType::Terminal || !process.is_some_and(|p| sg_ptyd::tree::is_shell(&p.name)) {
+            return None;
+        }
+        let found = crate::agent::resume::Resume::load(&content.extra)?;
+        let id = pid.to_owned();
+        let tip = found.command(process.and_then(|p| p.cwd.as_deref()));
+        Some(
+            div()
+                .id(SharedString::from(format!("resume-{pid}")))
+                .flex_none()
+                .px(px(7.))
+                .py(px(1.))
+                .rounded(px(4.))
+                .border_1()
+                .border_color(border())
+                .text_size(px(10.))
+                .text_color(TEXT_MUTED)
+                .cursor_pointer()
+                .hover(|d| d.bg(bg_hover()).text_color(TEXT_PRIMARY))
+                .child(format!("↻ Resume {}", found.agent))
+                .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.resume_agent_session(&id, cx);
+                }))
+                .into_any_element(),
+        )
+    }
+
     /// The ghost of a dragged pane under the cursor, over a full-window layer
     /// that keeps the panes beneath from seeing the drag (Electron's `.drag-ghost`:
     /// the pane scaled to fit 280×200, centred on the cursor, at 92% opacity).

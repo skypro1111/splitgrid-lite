@@ -246,6 +246,11 @@ impl AppView {
     }
 
     fn render_collapsed_row(&self, ws: &Workspace, active: bool, cx: &mut Context<Self>) -> AnyElement {
+        let row = self.render_collapsed_icon(ws, active, cx);
+        self.workspace_drag_and_drop(row, ws, cx).into_any_element()
+    }
+
+    fn render_collapsed_icon(&self, ws: &Workspace, active: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let id = ws.id.clone();
         let initial = ws.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
         div()
@@ -273,7 +278,6 @@ impl AppView {
             })
             .child(initial)
             .on_click(cx.listener(move |this, _, window, cx| this.switch_workspace(id.clone(), window, cx)))
-            .into_any_element()
     }
 
     fn render_workspace_row(&self, ix: usize, ws: &Workspace, active: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -385,7 +389,40 @@ impl AppView {
                     this.switch_workspace(id.clone(), window, cx);
                 }
             }))
+            .map(|d| self.workspace_drag_and_drop(d, ws, cx))
             .into_any_element()
+    }
+
+    /// A workspace row (full or collapsed) as a drag source and drop target:
+    /// dragged onto another row it moves there; a pane header dropped on it moves
+    /// the pane into that workspace (AppView::on_drag_end). Records the row's
+    /// bounds for the latter.
+    fn workspace_drag_and_drop(&self, row: Stateful<Div>, ws: &Workspace, cx: &mut Context<Self>) -> Stateful<Div> {
+        let dragged = DraggedWorkspace { id: ws.id.clone(), name: ws.name.clone().into() };
+        let (onto, rec, key) = (ws.id.clone(), self.ws_row_bounds.clone(), ws.id.clone());
+        let pane_over = matches!(&self.drag, Some(Drag::Pane { id, pos, active: true, .. })
+            if self.workspace_drop_target(id, *pos).as_deref() == Some(ws.id.as_str()));
+        row.relative()
+            .child(canvas(move |b, _, _| { rec.borrow_mut().insert(key, b); }, |_, _, _, _| {}).absolute().size_full())
+            .on_drag(dragged, |d, _, _, cx| cx.new(|_| d.clone()))
+            .drag_over::<DraggedWorkspace>(|s, _, _, _| s.bg(hexa(0x4c9df3, 0.18)))
+            .on_drop(cx.listener(move |this, d: &DraggedWorkspace, _, cx| {
+                if this.state.move_workspace(&d.id, &onto) {
+                    this.changed(cx);
+                }
+            }))
+            .when(pane_over, |d| d.child(crate::grid::drop_target_frame()))
+    }
+
+    /// The workspace under `pos` that pane `pane` can be dropped into (not its own).
+    pub(crate) fn workspace_drop_target(&self, pane: &str, pos: Point<Pixels>) -> Option<String> {
+        let bounds = self.ws_row_bounds.borrow();
+        self.state
+            .workspaces
+            .iter()
+            .filter(|w| !w.leaves().iter().any(|l| l == pane))
+            .find(|w| bounds.get(&w.id).is_some_and(|b| b.contains(&pos)))
+            .map(|w| w.id.clone())
     }
 
     /// The notes and todo buttons on a workspace row (WorkspaceNotesTodo).
@@ -517,5 +554,29 @@ impl AppView {
                     .on_click(cx.listener(|this, _, _, cx| this.open_settings(crate::settings::SettingsTab::Ssh, cx))),
             )
             .into_any_element()
+    }
+}
+
+/// A workspace row being dragged to a new place in the list; renders as its ghost.
+#[derive(Clone)]
+pub(crate) struct DraggedWorkspace {
+    id: String,
+    name: SharedString,
+}
+
+impl Render for DraggedWorkspace {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(10.))
+            .py(px(6.))
+            .rounded(px(6.))
+            .bg(bg_hover())
+            .border_1()
+            .border_color(border())
+            .opacity(0.92)
+            .text_size(px(13.))
+            .text_color(TEXT_PRIMARY)
+            .font_family(crate::theme::ui_font())
+            .child(self.name.clone())
     }
 }

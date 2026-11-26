@@ -13,6 +13,7 @@ mod commands;
 mod grid;
 mod history;
 mod ide;
+mod image_view;
 mod layout_anim;
 mod model;
 mod overlay;
