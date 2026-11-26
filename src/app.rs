@@ -206,6 +206,8 @@ pub struct AppView {
     pub(crate) focus_from: Option<Bounds<Pixels>>,
     /// Each pane's on-screen bounds and the grid area's, from the last frame.
     pub(crate) pane_bounds: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
+    /// Each sidebar workspace row's bounds, by workspace id, for dropping a pane on it.
+    pub(crate) ws_row_bounds: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
     pub(crate) grid_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
     /// The sidebar's width tween while it collapses or expands: (from, start).
     pub(crate) sidebar_anim: Option<(f32, std::time::Instant)>,
@@ -397,6 +399,7 @@ impl AppView {
             focus_anim: None,
             focus_from: None,
             pane_bounds: Default::default(),
+            ws_row_bounds: Default::default(),
             grid_bounds: Default::default(),
             sidebar_anim: None,
             layout_anim: Default::default(),
@@ -1744,7 +1747,16 @@ impl AppView {
         match self.drag.take() {
             Some(Drag::Split { .. }) => self.changed(cx),
             Some(Drag::Pane { id, pos, active: true, .. }) => {
-                if let Some(target) = self.pane_drop_target(&id, pos)
+                // Dropped on another workspace in the sidebar: it moves there, running.
+                if let Some(ws) = self.workspace_drop_target(&id, pos) {
+                    if self.state.move_pane(&id, &ws) {
+                        if self.focus_mode.as_deref() == Some(id.as_str()) {
+                            self.focus_mode = None;
+                        }
+                        self.focus_pending = true;
+                        self.changed(cx);
+                    }
+                } else if let Some(target) = self.pane_drop_target(&id, pos)
                     && let Some(tree) = self.state.active_mut().and_then(|w| w.layout_tree.as_mut())
                     && tree.swap_leaves(&id, &target)
                 {
@@ -1786,6 +1798,7 @@ impl Render for AppView {
             self.focus_active_pane(window, cx);
         }
         self.split_bounds.borrow_mut().clear();
+        self.ws_row_bounds.borrow_mut().clear();
         self.settle_focus_anim(window);
         self.settle_layout_anim(window, cx);
         // Web views are native views over the window: which may show this frame.

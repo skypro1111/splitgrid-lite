@@ -16,6 +16,7 @@ pub mod ext_route;
 pub mod history_cmd;
 pub mod install;
 pub mod notify;
+pub mod resume;
 pub mod server;
 pub mod sql_cmd;
 pub mod sftp_cmd;
@@ -154,6 +155,29 @@ impl crate::app::AppView {
         self.agent.as_ref().map(|a| a.env_for(id)).unwrap_or_default()
     }
 
+    /// Keep the agent session a hook reports in its terminal's container
+    /// (resume::Resume), saving the workspace only when it changed.
+    fn remember_agent_session(&mut self, terminal: &str, payload: &serde_json::Value, cx: &mut gpui_kit::Context<Self>) {
+        let Some(found) = resume::Resume::from_hook(payload, self.attention.session(terminal)) else { return };
+        let Some(content) = self.state.workspaces.iter_mut().find_map(|w| w.container_mut(terminal)).map(|c| &mut c.content) else { return };
+        if resume::Resume::load(&content.extra).as_ref() == Some(&found) {
+            return;
+        }
+        content.extra.insert(resume::KEY.into(), found.to_value());
+        self.changed(cx);
+    }
+
+    /// Type a pane's resume command at its shell's prompt (the header's Resume button).
+    pub(crate) fn resume_agent_session(&mut self, id: &str, cx: &mut gpui_kit::Context<Self>) {
+        let Some(found) = self.state.workspaces.iter().find_map(|w| w.container(id)).and_then(|c| resume::Resume::load(&c.content.extra)) else { return };
+        let Some(pane) = self.panes.get(id) else { return };
+        let shell_cwd = pane.process.as_ref().and_then(|p| p.cwd.clone());
+        let line = found.command(shell_cwd.as_deref());
+        pane.view.update(cx, |v, cx| v.type_text(&format!("{line}\r"), cx));
+        self.focus_pending_now();
+        cx.notify();
+    }
+
     /// Recompute the agent terminals' status and raise what the user should hear about.
     pub(crate) fn refresh_attention(&mut self, window: &mut gpui_kit::Window, cx: &mut gpui_kit::Context<Self>) {
         use attention::{Alert, Term};
@@ -246,9 +270,12 @@ impl crate::app::AppView {
                 req.respond(json!({}));
                 if let (Some(terminal), Some(event)) = (terminal, event)
                     && self.state.workspaces.iter().any(|w| w.container(&terminal).is_some())
-                    && self.attention.on_hook(&terminal, &event, &req_body, now_ms())
                 {
-                    self.refresh_attention(window, cx);
+                    let changed = self.attention.on_hook(&terminal, &event, &req_body, now_ms());
+                    self.remember_agent_session(&terminal, &req_body, cx);
+                    if changed {
+                        self.refresh_attention(window, cx);
+                    }
                 }
             }
             "terminal" => {
